@@ -1,11 +1,18 @@
 import { useState, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Image, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Image, Alert, KeyboardAvoidingView, Platform, Switch } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { loadProfile, saveProfile, loadWeights, saveWeights, loadState } from '../../constants/storage';
+import { useSettings } from '../../constants/SettingsContext';
+import { getTheme } from '../../constants/theme';
+import { supabase } from '../../constants/supabase';
 
 export default function PerfilScreen() {
+  const { settings, updateSettings, t, isDark } = useSettings();
+  const theme = getTheme(isDark);
+  const router = useRouter();
+
   const [profile, setProfile] = useState(null);
   const [weights, setWeights] = useState([]);
   const [state, setState] = useState(null);
@@ -21,7 +28,7 @@ export default function PerfilScreen() {
 
   async function pickPhoto() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') { Alert.alert('Permisos', 'Necesitamos acceso a tu galería'); return; }
+    if (status !== 'granted') { Alert.alert(t('profile.permissions'), t('profile.galleryAccess')); return; }
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.7 });
     if (!result.canceled) {
       const updated = { ...form, photoUri: result.assets[0].uri };
@@ -39,7 +46,7 @@ export default function PerfilScreen() {
 
   async function addWeight() {
     const val = parseFloat(newWeight.replace(',', '.'));
-    if (!val || val < 20 || val > 300) { Alert.alert('Error', 'Introduce un peso válido'); return; }
+    if (!val || val < 20 || val > 300) { Alert.alert(t('common.error'), t('profile.invalidWeight')); return; }
     const entry = { date: new Date().toLocaleDateString('es-ES'), value: val };
     const updated = [entry, ...weights].slice(0, 30);
     setWeights(updated);
@@ -47,91 +54,294 @@ export default function PerfilScreen() {
     setNewWeight('');
   }
 
-  if (!profile) return <View style={s.loading}><Text style={{ color: '#888888' }}>Cargando...</Text></View>;
+  function handleLogout() {
+    Alert.alert(
+      t('profile.logout'),
+      t('profile.logoutConfirm'),
+      [
+        { text: t('profile.cancel'), style: 'cancel' },
+        {
+          text: t('profile.logout'),
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.auth.signOut();
+            router.replace('/login');
+          },
+        },
+      ]
+    );
+  }
+
+  function handleDeleteAccount() {
+    Alert.alert(
+      t('profile.deleteAccount'),
+      t('profile.deleteMsg'),
+      [
+        { text: t('profile.cancel'), style: 'cancel' },
+        {
+          text: t('profile.deleteAccount'),
+          style: 'destructive',
+          onPress: () => Alert.alert(t('profile.comingSoon'), t('profile.comingSoonMsg')),
+        },
+      ]
+    );
+  }
+
+  function handleSubscription() {
+    Alert.alert(t('profile.comingSoon'), t('profile.comingSoonMsg'));
+  }
+
+  if (!profile) return <View style={[s.loading, { backgroundColor: theme.bg }]}><Text style={{ color: theme.gray }}>{t('common.loading')}</Text></View>;
 
   const initials = (profile.name || 'AF').substring(0, 2).toUpperCase();
   const currentWeight = weights[0]?.value;
   const startWeight = parseFloat(profile.startWeight);
   const diff = currentWeight && startWeight ? (currentWeight - startWeight).toFixed(1) : null;
 
+  const LANGS = [
+    { code: 'ca', label: 'Catala' },
+    { code: 'es', label: 'Castellano' },
+    { code: 'en', label: 'English' },
+  ];
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <SafeAreaView style={s.safe}>
+      <SafeAreaView style={[s.safe, { backgroundColor: theme.bg }]}>
         <ScrollView showsVerticalScrollIndicator={false}>
+          {/* ── Header ── */}
           <View style={s.header}>
             <TouchableOpacity onPress={pickPhoto}>
               {profile.photoUri
                 ? <Image source={{ uri: profile.photoUri }} style={s.avatar} />
-                : <View style={s.avatarPlaceholder}><Text style={s.avatarText}>{initials}</Text></View>
+                : <View style={[s.avatarPlaceholder, { backgroundColor: theme.accent }]}><Text style={[s.avatarText, { color: '#000' }]}>{initials}</Text></View>
               }
-              <View style={s.cameraIcon}><Text style={{ fontSize: 14 }}>📷</Text></View>
+              <View style={[s.cameraIcon, { backgroundColor: theme.bgCard, borderColor: theme.border }]}><Text style={{ fontSize: 14 }}>📷</Text></View>
             </TouchableOpacity>
             <View style={s.headerInfo}>
-              <Text style={s.name}>{profile.name || 'Tu nombre'}</Text>
-              <Text style={s.levelBadge}>Nivel {state?.level || 1} · Semana {state?.currentWeek || 1}</Text>
+              <Text style={[s.name, { color: theme.white }]}>{profile.name || t('profile.yourName')}</Text>
+              <Text style={[s.levelBadge, { color: theme.gray }]}>{t('profile.level')} {state?.level || 1} · {t('profile.week')} {state?.currentWeek || 1}</Text>
             </View>
-            <TouchableOpacity onPress={() => editing ? saveForm() : setEditing(true)} style={s.editBtn}>
-              <Text style={s.editBtnText}>{editing ? 'Guardar' : 'Editar'}</Text>
+            <TouchableOpacity onPress={() => editing ? saveForm() : setEditing(true)} style={[s.editBtn, { backgroundColor: theme.bgLight, borderColor: theme.border }]}>
+              <Text style={[s.editBtnText, { color: theme.accent }]}>{editing ? t('profile.save') : t('profile.edit')}</Text>
             </TouchableOpacity>
           </View>
 
+          {/* ── Stats ── */}
           <View style={s.statsRow}>
-            <View style={s.statCard}>
-              <Text style={s.statVal}>{state?.streak || 0}🔥</Text>
-              <Text style={s.statLbl}>Racha</Text>
+            <View style={[s.statCard, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+              <Text style={[s.statVal, { color: theme.white }]}>{state?.streak || 0}🔥</Text>
+              <Text style={[s.statLbl, { color: theme.gray }]}>{t('profile.streak')}</Text>
             </View>
-            <View style={s.statCard}>
-              <Text style={s.statVal}>{state?.xp || 0}</Text>
-              <Text style={s.statLbl}>XP total</Text>
+            <View style={[s.statCard, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+              <Text style={[s.statVal, { color: theme.white }]}>{state?.xp || 0}</Text>
+              <Text style={[s.statLbl, { color: theme.gray }]}>{t('profile.totalXP')}</Text>
             </View>
-            <View style={s.statCard}>
-              <Text style={s.statVal}>{state?.completedDays?.length || 0}</Text>
-              <Text style={s.statLbl}>Días</Text>
+            <View style={[s.statCard, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+              <Text style={[s.statVal, { color: theme.white }]}>{state?.completedDays?.length || 0}</Text>
+              <Text style={[s.statLbl, { color: theme.gray }]}>{t('profile.days')}</Text>
             </View>
           </View>
 
-          <Text style={s.sectionTitle}>DATOS PERSONALES</Text>
-          <View style={s.card}>
+          {/* ── Personal Data ── */}
+          <Text style={[s.sectionTitle, { color: theme.gray }]}>{t('profile.personalData')}</Text>
+          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
             {[
-              { label: 'Nombre', field: 'name' },
-              { label: 'Altura (cm)', field: 'height', keyboardType: 'numeric' },
-              { label: 'Peso inicial (kg)', field: 'startWeight', keyboardType: 'numeric' },
-              { label: 'Objetivo', field: 'goal', last: true },
+              { label: t('profile.name'), field: 'name' },
+              { label: t('profile.height'), field: 'height', keyboardType: 'numeric' },
+              { label: t('profile.startWeight'), field: 'startWeight', keyboardType: 'numeric' },
+              { label: t('profile.goal'), field: 'goal', last: true },
             ].map(({ label, field, keyboardType, last }) => (
-              <View key={field} style={[s.row, last && { borderBottomWidth: 0 }]}>
-                <Text style={s.rowLabel}>{label}</Text>
+              <View key={field} style={[s.row, { borderBottomColor: theme.border }, last && { borderBottomWidth: 0 }]}>
+                <Text style={[s.rowLabel, { color: theme.gray }]}>{label}</Text>
                 {editing
-                  ? <TextInput style={s.rowInput} value={form[field] || ''} onChangeText={v => setForm({ ...form, [field]: v })} keyboardType={keyboardType || 'default'} placeholderTextColor="#888888" placeholder="—" />
-                  : <Text style={s.rowValue}>{profile[field] || '—'}</Text>
+                  ? <TextInput style={[s.rowInput, { color: theme.accent }]} value={form[field] || ''} onChangeText={v => setForm({ ...form, [field]: v })} keyboardType={keyboardType || 'default'} placeholderTextColor={theme.gray} placeholder="—" />
+                  : <Text style={[s.rowValue, { color: theme.white }]}>{profile[field] || '—'}</Text>
                 }
               </View>
             ))}
           </View>
 
-          <Text style={s.sectionTitle}>CONTROL DE PESO</Text>
+          {/* ── Weight Tracking ── */}
+          <Text style={[s.sectionTitle, { color: theme.gray }]}>{t('profile.weightControl')}</Text>
           {diff !== null && (
-            <View style={[s.diffBanner, { backgroundColor: parseFloat(diff) <= 0 ? '#00CC6622' : '#FF444422' }]}>
-              <Text style={[s.diffText, { color: parseFloat(diff) <= 0 ? '#00CC66' : '#FF4444' }]}>
-                {parseFloat(diff) <= 0 ? '↓' : '↑'} {Math.abs(diff)} kg desde el inicio
+            <View style={[s.diffBanner, { backgroundColor: parseFloat(diff) <= 0 ? theme.success + '22' : theme.danger + '22' }]}>
+              <Text style={[s.diffText, { color: parseFloat(diff) <= 0 ? theme.success : theme.danger }]}>
+                {parseFloat(diff) <= 0 ? '↓' : '↑'} {Math.abs(diff)} kg {t('profile.fromStart')}
               </Text>
             </View>
           )}
-          <View style={s.card}>
-            <View style={s.weightInput}>
-              <TextInput style={s.weightField} placeholder="Peso actual (kg)" placeholderTextColor="#888888" keyboardType="decimal-pad" value={newWeight} onChangeText={setNewWeight} />
-              <TouchableOpacity style={s.weightBtn} onPress={addWeight}>
-                <Text style={s.weightBtnText}>+ Añadir</Text>
+          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+            <View style={[s.weightInput, { borderBottomColor: theme.border }]}>
+              <TextInput style={[s.weightField, { color: theme.white }]} placeholder={t('profile.currentWeight')} placeholderTextColor={theme.gray} keyboardType="decimal-pad" value={newWeight} onChangeText={setNewWeight} />
+              <TouchableOpacity style={[s.weightBtn, { backgroundColor: theme.accent }]} onPress={addWeight}>
+                <Text style={s.weightBtnText}>{t('profile.addWeight')}</Text>
               </TouchableOpacity>
             </View>
             {weights.slice(0, 8).map((w, i) => (
-              <View key={i} style={[s.weightRow, i === weights.length - 1 && { borderBottomWidth: 0 }]}>
-                <Text style={s.weightDate}>{w.date}</Text>
-                <Text style={s.weightVal}>{w.value} kg</Text>
-                {i === 0 && <View style={s.latestPill}><Text style={s.latestText}>actual</Text></View>}
+              <View key={i} style={[s.weightRow, { borderBottomColor: theme.border }, i === weights.length - 1 && { borderBottomWidth: 0 }]}>
+                <Text style={[s.weightDate, { color: theme.gray }]}>{w.date}</Text>
+                <Text style={[s.weightVal, { color: theme.white }]}>{w.value} kg</Text>
+                {i === 0 && <View style={[s.latestPill, { backgroundColor: theme.accent + '33' }]}><Text style={[s.latestText, { color: theme.accent }]}>{t('profile.current')}</Text></View>}
               </View>
             ))}
-            {weights.length === 0 && <Text style={s.emptyText}>Registra tu primer peso 👆</Text>}
+            {weights.length === 0 && <Text style={[s.emptyText, { color: theme.gray }]}>{t('profile.firstWeight')} 👆</Text>}
           </View>
+
+          {/* ══════════════════════════════════════════════════════════
+              SETTINGS SECTION
+             ══════════════════════════════════════════════════════════ */}
+          <Text style={[s.sectionTitle, { color: theme.gray }]}>{t('profile.settings')}</Text>
+
+          {/* ── Language ── */}
+          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+            <Text style={[s.settingLabel, { color: theme.white }]}>{t('profile.language')}</Text>
+            <View style={s.pillRow}>
+              {LANGS.map(({ code, label }) => {
+                const active = settings.lang === code;
+                return (
+                  <TouchableOpacity
+                    key={code}
+                    onPress={() => updateSettings({ lang: code })}
+                    style={[
+                      s.pill,
+                      { borderColor: active ? theme.accent : theme.border, backgroundColor: active ? theme.accent + '22' : 'transparent' },
+                    ]}
+                  >
+                    <Text style={[s.pillText, { color: active ? theme.accent : theme.gray }]}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* ── Theme ── */}
+          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+            <Text style={[s.settingLabel, { color: theme.white }]}>{t('profile.theme')}</Text>
+            <View style={s.pillRow}>
+              <TouchableOpacity
+                onPress={() => updateSettings({ theme: 'dark' })}
+                style={[
+                  s.pill, s.pillHalf,
+                  { borderColor: isDark ? theme.accent : theme.border, backgroundColor: isDark ? theme.accent + '22' : 'transparent' },
+                ]}
+              >
+                <Text style={[s.pillText, { color: isDark ? theme.accent : theme.gray }]}>🌙 {t('profile.darkMode')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => updateSettings({ theme: 'light' })}
+                style={[
+                  s.pill, s.pillHalf,
+                  { borderColor: !isDark ? theme.accent : theme.border, backgroundColor: !isDark ? theme.accent + '22' : 'transparent' },
+                ]}
+              >
+                <Text style={[s.pillText, { color: !isDark ? theme.accent : theme.gray }]}>☀️ {t('profile.lightMode')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* ── Notifications ── */}
+          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+            <View style={s.switchRow}>
+              <Text style={[s.settingLabel, { color: theme.white, marginBottom: 0 }]}>{t('profile.notifications')}</Text>
+              <View style={s.switchRight}>
+                <Text style={[s.switchLabel, { color: theme.gray }]}>
+                  {settings.notifications ? t('profile.on') : t('profile.off')}
+                </Text>
+                <Switch
+                  value={settings.notifications}
+                  onValueChange={v => updateSettings({ notifications: v })}
+                  trackColor={{ false: theme.border, true: theme.accent + '66' }}
+                  thumbColor={settings.notifications ? theme.accent : theme.gray}
+                />
+              </View>
+            </View>
+          </View>
+
+          {/* ── Subscription ── */}
+          <Text style={[s.sectionTitle, { color: theme.gray }]}>{t('profile.subscription')}</Text>
+          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+            <View style={s.currentPlanRow}>
+              <Text style={[s.settingLabel, { color: theme.white, marginBottom: 0 }]}>{t('profile.currentPlan')}</Text>
+              <View style={[s.planBadge, { backgroundColor: settings.subscription === 'free' ? theme.bgLight : theme.accent + '22' }]}>
+                <Text style={[s.planBadgeText, { color: settings.subscription === 'free' ? theme.gray : theme.accent }]}>
+                  {settings.subscription === 'free' ? t('profile.free') : t('profile.premium')}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Subscription cards */}
+          <View style={s.subsCards}>
+            <TouchableOpacity
+              style={[s.subsCard, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
+              onPress={handleSubscription}
+              activeOpacity={0.7}
+            >
+              <Text style={[s.subsCardTitle, { color: theme.white }]}>{t('profile.monthly')}</Text>
+              <Text style={[s.subsCardPrice, { color: theme.accent }]}>14,99€</Text>
+              <Text style={[s.subsCardPeriod, { color: theme.gray }]}>{t('profile.perMonth')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.subsCard, { backgroundColor: theme.bgCard, borderColor: theme.accent }]}
+              onPress={handleSubscription}
+              activeOpacity={0.7}
+            >
+              <View style={[s.savingsBadge, { backgroundColor: theme.accent }]}>
+                <Text style={s.savingsText}>{t('profile.savingsPercent')}</Text>
+              </View>
+              <Text style={[s.subsCardTitle, { color: theme.white }]}>{t('profile.yearly')}</Text>
+              <Text style={[s.subsCardPrice, { color: theme.accent }]}>89,99€</Text>
+              <Text style={[s.subsCardPeriod, { color: theme.gray }]}>{t('profile.perYear')}</Text>
+              <Text style={[s.subsRecommended, { color: theme.accent }]}>{t('profile.recommended')}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* ══════════════════════════════════════════════════════════
+              ACCOUNT SECTION
+             ══════════════════════════════════════════════════════════ */}
+          <Text style={[s.sectionTitle, { color: theme.gray }]}>{t('profile.account')}</Text>
+
+          {/* Log out */}
+          <TouchableOpacity
+            style={[s.card, s.accountRow, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
+            onPress={handleLogout}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.accountRowText, { color: theme.danger }]}>{t('profile.logout')}</Text>
+          </TouchableOpacity>
+
+          {/* Privacy policy */}
+          <TouchableOpacity
+            style={[s.card, s.accountRow, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
+            onPress={() => Alert.alert(t('profile.privacyPolicy'), t('profile.comingSoonMsg'))}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.accountRowText, { color: theme.white }]}>{t('profile.privacyPolicy')}</Text>
+            <Text style={{ color: theme.gray, fontSize: 16 }}>›</Text>
+          </TouchableOpacity>
+
+          {/* Terms of service */}
+          <TouchableOpacity
+            style={[s.card, s.accountRow, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
+            onPress={() => Alert.alert(t('profile.termsOfService'), t('profile.comingSoonMsg'))}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.accountRowText, { color: theme.white }]}>{t('profile.termsOfService')}</Text>
+            <Text style={{ color: theme.gray, fontSize: 16 }}>›</Text>
+          </TouchableOpacity>
+
+          {/* Delete account */}
+          <TouchableOpacity
+            style={[s.card, s.accountRow, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
+            onPress={handleDeleteAccount}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.accountRowText, { color: theme.danger }]}>{t('profile.deleteAccount')}</Text>
+          </TouchableOpacity>
+
+          {/* App version */}
+          <Text style={[s.versionText, { color: theme.gray }]}>AREAFIT v1.0.0</Text>
+
           <View style={{ height: 40 }} />
         </ScrollView>
       </SafeAreaView>
@@ -140,38 +350,66 @@ export default function PerfilScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0F0F0F' },
-  loading: { flex: 1, backgroundColor: '#0F0F0F', alignItems: 'center', justifyContent: 'center' },
+  safe: { flex: 1 },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 20 },
   avatar: { width: 70, height: 70, borderRadius: 35 },
-  avatarPlaceholder: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#C8FF00', alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 24, fontWeight: '900', color: '#000' },
-  cameraIcon: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#1A1A1A', borderRadius: 10, padding: 2, borderWidth: 1, borderColor: '#2A2A2A' },
+  avatarPlaceholder: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontSize: 24, fontWeight: '900' },
+  cameraIcon: { position: 'absolute', bottom: 0, right: 0, borderRadius: 10, padding: 2, borderWidth: 1 },
   headerInfo: { flex: 1 },
-  name: { fontSize: 20, fontWeight: '900', color: '#FFFFFF' },
-  levelBadge: { fontSize: 12, color: '#888888', marginTop: 2 },
-  editBtn: { backgroundColor: '#242424', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: '#2A2A2A' },
-  editBtnText: { color: '#C8FF00', fontSize: 13, fontWeight: '700' },
+  name: { fontSize: 20, fontWeight: '900' },
+  levelBadge: { fontSize: 12, marginTop: 2 },
+  editBtn: { borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1 },
+  editBtnText: { fontSize: 13, fontWeight: '700' },
   statsRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginBottom: 24 },
-  statCard: { flex: 1, backgroundColor: '#1A1A1A', borderRadius: 14, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#2A2A2A' },
-  statVal: { fontSize: 20, fontWeight: '900', color: '#FFFFFF', marginBottom: 2 },
-  statLbl: { fontSize: 11, color: '#888888', fontWeight: '600' },
-  sectionTitle: { fontSize: 11, fontWeight: '700', color: '#888888', letterSpacing: 1.5, paddingHorizontal: 20, marginBottom: 10 },
-  card: { marginHorizontal: 20, backgroundColor: '#1A1A1A', borderRadius: 16, paddingHorizontal: 16, marginBottom: 24, borderWidth: 1, borderColor: '#2A2A2A' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: '#2A2A2A' },
-  rowLabel: { fontSize: 14, color: '#888888' },
-  rowValue: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
-  rowInput: { fontSize: 14, color: '#C8FF00', fontWeight: '700', textAlign: 'right', minWidth: 100 },
+  statCard: { flex: 1, borderRadius: 14, padding: 14, alignItems: 'center', borderWidth: 1 },
+  statVal: { fontSize: 20, fontWeight: '900', marginBottom: 2 },
+  statLbl: { fontSize: 11, fontWeight: '600' },
+  sectionTitle: { fontSize: 11, fontWeight: '700', letterSpacing: 1.5, paddingHorizontal: 20, marginBottom: 10 },
+  card: { marginHorizontal: 20, borderRadius: 16, paddingHorizontal: 16, marginBottom: 14, borderWidth: 1 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 0.5 },
+  rowLabel: { fontSize: 14 },
+  rowValue: { fontSize: 14, fontWeight: '700' },
+  rowInput: { fontSize: 14, fontWeight: '700', textAlign: 'right', minWidth: 100 },
   diffBanner: { marginHorizontal: 20, borderRadius: 12, padding: 12, marginBottom: 10, alignItems: 'center' },
   diffText: { fontSize: 15, fontWeight: '800' },
-  weightInput: { flexDirection: 'row', gap: 10, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#2A2A2A' },
-  weightField: { flex: 1, color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  weightBtn: { backgroundColor: '#C8FF00', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8 },
+  weightInput: { flexDirection: 'row', gap: 10, paddingVertical: 12, borderBottomWidth: 0.5 },
+  weightField: { flex: 1, fontSize: 16, fontWeight: '700' },
+  weightBtn: { borderRadius: 10, paddingHorizontal: 16, paddingVertical: 8 },
   weightBtnText: { color: '#000', fontWeight: '800', fontSize: 13 },
-  weightRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: '#2A2A2A' },
-  weightDate: { flex: 1, fontSize: 13, color: '#888888' },
-  weightVal: { fontSize: 15, fontWeight: '800', color: '#FFFFFF', marginRight: 8 },
-  latestPill: { backgroundColor: '#C8FF0033', borderRadius: 99, paddingHorizontal: 8, paddingVertical: 2 },
-  latestText: { fontSize: 10, fontWeight: '700', color: '#C8FF00' },
-  emptyText: { color: '#888888', textAlign: 'center', paddingVertical: 20, fontSize: 14 },
+  weightRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 0.5 },
+  weightDate: { flex: 1, fontSize: 13 },
+  weightVal: { fontSize: 15, fontWeight: '800', marginRight: 8 },
+  latestPill: { borderRadius: 99, paddingHorizontal: 8, paddingVertical: 2 },
+  latestText: { fontSize: 10, fontWeight: '700' },
+  emptyText: { textAlign: 'center', paddingVertical: 20, fontSize: 14 },
+
+  /* ── Settings styles ── */
+  settingLabel: { fontSize: 14, fontWeight: '700', marginBottom: 10, marginTop: 14 },
+  pillRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  pill: { borderRadius: 20, borderWidth: 1.5, paddingHorizontal: 16, paddingVertical: 8 },
+  pillHalf: { flex: 1, alignItems: 'center' },
+  pillText: { fontSize: 13, fontWeight: '700' },
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14 },
+  switchRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  switchLabel: { fontSize: 12, fontWeight: '600' },
+
+  /* ── Subscription styles ── */
+  currentPlanRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14 },
+  planBadge: { borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4 },
+  planBadgeText: { fontSize: 12, fontWeight: '800' },
+  subsCards: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginBottom: 24 },
+  subsCard: { flex: 1, borderRadius: 16, borderWidth: 1, padding: 16, alignItems: 'center' },
+  subsCardTitle: { fontSize: 14, fontWeight: '800', marginBottom: 6 },
+  subsCardPrice: { fontSize: 24, fontWeight: '900', marginBottom: 2 },
+  subsCardPeriod: { fontSize: 12, fontWeight: '600' },
+  savingsBadge: { position: 'absolute', top: -10, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3 },
+  savingsText: { color: '#000', fontSize: 10, fontWeight: '800' },
+  subsRecommended: { fontSize: 10, fontWeight: '700', marginTop: 6 },
+
+  /* ── Account styles ── */
+  accountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14 },
+  accountRowText: { fontSize: 15, fontWeight: '700' },
+  versionText: { textAlign: 'center', fontSize: 12, fontWeight: '600', marginTop: 10, marginBottom: 4 },
 });
