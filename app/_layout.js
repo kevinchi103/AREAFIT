@@ -10,6 +10,8 @@ export default function RootLayout() {
         <Stack.Screen name="onboarding" />
         <Stack.Screen name="test" />
         <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="admin-workouts" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="notifications" />
       </Stack>
     </SettingsProvider>
   );

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Animated, Vibration,
+  StyleSheet, Animated, Vibration, Platform,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WEEKS, PHASE_COLORS } from '../constants/program';
@@ -10,6 +11,11 @@ import { loadState, saveState } from '../constants/storage';
 import { calcWorkoutXP, syncXPToSupabase, saveWorkoutSession } from '../constants/leagues';
 import { useSettings } from '../constants/SettingsContext';
 import { getTheme } from '../constants/theme';
+import { submitWorkoutFeedback } from '../constants/customWorkouts';
+import { checkAndUnlockAchievements } from '../constants/achievements';
+import AchievementToast from '../constants/AchievementToast';
+import XPToast from '../constants/XPToast';
+import StreakToast from '../constants/StreakToast';
 
 // ─── Ilustraciones de ejercicios (stick figure con Views) ────────
 const EXERCISE_ILLUSTRATIONS = {
@@ -394,18 +400,50 @@ function formatTime(seconds) {
 // ─── Componente principal ────────────────────────────────────────
 export default function WorkoutScreen() {
   const router = useRouter();
-  const { t, isDark } = useSettings();
+  const { t, isDark, settings } = useSettings();
   const theme = getTheme(isDark);
-  const { id, week } = useLocalSearchParams();
-  const weekIndex = parseInt(week) || 0;
-  const weekData = WEEKS[Math.min(weekIndex, WEEKS.length - 1)];
-  const workout = weekData?.workouts.find(w => w.id === id);
+  const params = useLocalSearchParams();
+
+  // Support both program workouts (id+week) and custom workouts (customId+customData)
+  const isCustom = !!params.customId;
+  let workout = null;
+  let xpMultiplier = 1;
+  let assignmentNotes = params.assignmentNotes || '';
+
+  if (isCustom) {
+    try {
+      const cw = JSON.parse(params.customData);
+      xpMultiplier = cw.xp_multiplier || 1;
+      workout = {
+        id: cw.id,
+        name: cw.name,
+        emoji: '📋',
+        exercises: (cw.exercises || []).map(ex => ({
+          name: ex.name,
+          reps: ex.reps || `${ex.sets || 3} series`,
+          rest: ex.rest_seconds || 60,
+        })),
+      };
+    } catch {}
+  } else {
+    const weekIndex = parseInt(params.week) || 0;
+    const weekData = WEEKS[Math.min(weekIndex, WEEKS.length - 1)];
+    workout = weekData?.workouts.find(w => w.id === params.id);
+  }
 
   const [currentEx, setCurrentEx] = useState(0);
   const [completedExs, setCompletedExs] = useState([]);
   const [resting, setResting] = useState(false);
   const [restTime, setRestTime] = useState(0);
   const [finished, setFinished] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackRating, setFeedbackRating] = useState(3);
+  const [feedbackEnergy, setFeedbackEnergy] = useState(3);
+  const [unlockedAchievement, setUnlockedAchievement] = useState(null);
+  const [showXPToast, setShowXPToast] = useState(false);
+  const [earnedXP, setEarnedXP] = useState(0);
+  const [showStreakToast, setShowStreakToast] = useState(false);
+  const [newStreak, setNewStreak] = useState(0);
 
   // Exercise timer
   const [exerciseTime, setExerciseTime] = useState(0);
@@ -417,7 +455,8 @@ export default function WorkoutScreen() {
   const restInterval = useRef(null);
   const exerciseInterval = useRef(null);
 
-  const phaseColor = PHASE_COLORS[weekData?.phase] || theme.accent;
+  const weekData = !isCustom ? WEEKS[Math.min(parseInt(params.week) || 0, WEEKS.length - 1)] : null;
+  const phaseColor = weekData ? (PHASE_COLORS[weekData.phase] || theme.accent) : theme.accent;
 
   // Animacion de progreso
   useEffect(() => {
@@ -447,7 +486,7 @@ export default function WorkoutScreen() {
           if (t <= 1) {
             clearInterval(exerciseInterval.current);
             setTimerRunning(false);
-            Vibration.vibrate([0, 100, 50, 100]);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             return 0;
           }
           return t - 1;
@@ -465,7 +504,7 @@ export default function WorkoutScreen() {
           if (t <= 1) {
             clearInterval(restInterval.current);
             setResting(false);
-            Vibration.vibrate(200);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             return 0;
           }
           return t - 1;
@@ -508,6 +547,7 @@ export default function WorkoutScreen() {
   };
 
   const handleCompleteExercise = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     clearInterval(exerciseInterval.current);
     setTimerRunning(false);
 
@@ -516,7 +556,7 @@ export default function WorkoutScreen() {
 
     if (newCompleted.length >= exercises.length) {
       setFinished(true);
-      Vibration.vibrate([0, 100, 50, 100, 50, 200]);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } else {
       const rest = exercise.rest || 0;
       if (rest > 0) {
@@ -535,12 +575,20 @@ export default function WorkoutScreen() {
   };
 
   const handleFinishWorkout = async () => {
+    // For custom workouts, show feedback first
+    if (isCustom && !showFeedback) {
+      setShowFeedback(true);
+      return;
+    }
+
     const state = await loadState();
     const today = new Date().toDateString();
-    const dayKey = `${id}_${today}`;
+    const workoutId = isCustom ? `custom_${params.customId}` : params.id;
+    const dayKey = `${workoutId}_${today}`;
 
     if (!state.completedDays?.includes(dayKey)) {
-      const xpEarned = calcWorkoutXP(state.streak || 0);
+      const baseXP = calcWorkoutXP(state.streak || 0);
+      const xpEarned = Math.round(baseXP * xpMultiplier);
       const newState = {
         ...state,
         completedDays: [...(state.completedDays || []), dayKey],
@@ -550,8 +598,32 @@ export default function WorkoutScreen() {
         lastTrainDate: today,
       };
       await saveState(newState);
-      saveWorkoutSession(id, xpEarned, state.currentWeek);
+      // Show toasts
+      setEarnedXP(xpEarned);
+      setShowXPToast(true);
+      setNewStreak(newState.streak);
+      setShowStreakToast(true);
+
+      saveWorkoutSession(workoutId, xpEarned, state.currentWeek);
       syncXPToSupabase(xpEarned);
+
+      // Send feedback for custom workouts
+      if (isCustom) {
+        submitWorkoutFeedback({
+          workoutId: params.customId,
+          difficultyRating: feedbackRating,
+          energyLevel: feedbackEnergy,
+        });
+      }
+
+      // Check achievements
+      const newAchievements = await checkAndUnlockAchievements(newState);
+      if (newAchievements.length > 0) {
+        setUnlockedAchievement(newAchievements[0]);
+        // Wait for toast to show before navigating back
+        setTimeout(() => router.back(), 4000);
+        return;
+      }
     }
     router.back();
   };
@@ -561,14 +633,65 @@ export default function WorkoutScreen() {
     return (
       <SafeAreaView style={[st.safe, { backgroundColor: theme.bg }]}>
         <View style={st.center}>
-          <Text style={st.finishEmoji}>🎉</Text>
-          <Text style={[st.finishTitle, { color: theme.white }]}>{t('workout.finished')}</Text>
-          <Text style={[st.finishSub, { color: theme.gray }]}>{workout.emoji} {workout.name}</Text>
-          <Text style={[st.finishDetail, { color: theme.gray }]}>{exercises.length} {t('workout.exercisesDone')}</Text>
-          <TouchableOpacity style={[st.finishBtn, { backgroundColor: phaseColor }]} onPress={handleFinishWorkout}>
-            <Text style={[st.finishBtnText, { color: isDark ? '#000' : '#fff' }]}>{t('workout.saveAndBack')}</Text>
-          </TouchableOpacity>
+          {!showFeedback ? (
+            <>
+              <Text style={st.finishEmoji}>🎉</Text>
+              <Text style={[st.finishTitle, { color: theme.white }]}>{t('workout.finished')}</Text>
+              <Text style={[st.finishSub, { color: theme.gray }]}>{workout.emoji} {workout.name}</Text>
+              <Text style={[st.finishDetail, { color: theme.gray }]}>{exercises.length} {t('workout.exercisesDone')}</Text>
+              {xpMultiplier > 1 && (
+                <View style={{ backgroundColor: theme.accent + '20', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginBottom: 16 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '900', color: theme.accent }}>⚡ x{xpMultiplier} XP</Text>
+                </View>
+              )}
+              <TouchableOpacity style={[st.finishBtn, { backgroundColor: phaseColor }]} onPress={handleFinishWorkout}>
+                <Text style={[st.finishBtnText, { color: isDark ? '#000' : '#fff' }]}>{t('workout.saveAndBack')}</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={{ fontSize: 40, marginBottom: 12 }}>📝</Text>
+              <Text style={[st.finishTitle, { color: theme.white, fontSize: 22 }]}>Feedback</Text>
+              <Text style={[st.finishSub, { color: theme.gray, marginBottom: 20 }]}>{workout.name}</Text>
+
+              <Text style={{ fontSize: 12, fontWeight: '800', color: theme.gray, letterSpacing: 1, marginBottom: 8 }}>DIFICULTAD</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
+                {[1,2,3,4,5].map(n => (
+                  <TouchableOpacity key={n} onPress={() => setFeedbackRating(n)}
+                    style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: feedbackRating >= n ? theme.accent + '30' : theme.bgCard,
+                      borderWidth: 1, borderColor: feedbackRating >= n ? theme.accent : theme.border }}>
+                    <Text style={{ fontSize: 18 }}>⭐</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={{ fontSize: 12, fontWeight: '800', color: theme.gray, letterSpacing: 1, marginBottom: 8 }}>ENERGIA</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 28 }}>
+                {[1,2,3,4,5].map(n => (
+                  <TouchableOpacity key={n} onPress={() => setFeedbackEnergy(n)}
+                    style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: feedbackEnergy >= n ? '#FF950030' : theme.bgCard,
+                      borderWidth: 1, borderColor: feedbackEnergy >= n ? '#FF9500' : theme.border }}>
+                    <Text style={{ fontSize: 18 }}>⚡</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TouchableOpacity style={[st.finishBtn, { backgroundColor: phaseColor }]} onPress={handleFinishWorkout}>
+                <Text style={[st.finishBtnText, { color: isDark ? '#000' : '#fff' }]}>{t('workout.saveAndBack')}</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
+        <XPToast xp={earnedXP} visible={showXPToast} theme={theme} onDone={() => setShowXPToast(false)} />
+        <StreakToast streak={newStreak} visible={showStreakToast} theme={theme} onDone={() => setShowStreakToast(false)} />
+        <AchievementToast
+          achievement={unlockedAchievement}
+          lang={settings?.lang || 'es'}
+          theme={theme}
+          onDone={() => setUnlockedAchievement(null)}
+        />
       </SafeAreaView>
     );
   }

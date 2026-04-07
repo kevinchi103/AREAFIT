@@ -9,6 +9,7 @@ import { supabase, ADMIN_EMAIL } from '../../constants/supabase';
 import { LEAGUES, getLeagueForXP } from '../../constants/leagues';
 import { useSettings } from '../../constants/SettingsContext';
 import { getTheme } from '../../constants/theme';
+import { toggleUserPremium } from '../../constants/premium';
 
 export default function AdminScreen() {
   const router = useRouter();
@@ -109,6 +110,19 @@ export default function AdminScreen() {
         </View>
       </View>
 
+      {/* Botón entrenamientos personalizados */}
+      <TouchableOpacity
+        style={{ marginHorizontal: 16, marginBottom: 12, backgroundColor: theme.accent, borderRadius: 14, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}
+        onPress={() => router.push('/admin-workouts')}
+      >
+        <Text style={{ fontSize: 22 }}>📋</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 15, fontWeight: '800', color: isDark ? '#000' : '#fff' }}>Entrenamientos personalizados</Text>
+          <Text style={{ fontSize: 11, fontWeight: '600', color: isDark ? '#00000088' : '#ffffff88' }}>Crear, asignar y gestionar</Text>
+        </View>
+        <Text style={{ fontSize: 18, color: isDark ? '#000' : '#fff' }}>→</Text>
+      </TouchableOpacity>
+
       {/* Tabs */}
       <View style={st.tabRow}>
         {['overview', 'users', 'workouts'].map(tab => (
@@ -129,7 +143,7 @@ export default function AdminScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accent} />}
       >
         {selectedTab === 'overview' && <OverviewTab stats={stats} users={users} st={st} theme={theme} />}
-        {selectedTab === 'users' && <UsersTab users={users} st={st} theme={theme} />}
+        {selectedTab === 'users' && <UsersTab users={users} st={st} theme={theme} reload={loadAllData} />}
         {selectedTab === 'workouts' && <WorkoutsTab sessions={sessions} users={users} st={st} theme={theme} />}
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -210,12 +224,22 @@ function StatCard({ label, value, icon, color, st }) {
 }
 
 // ─── Users Tab ───────────────────────────────────────────────────
-function UsersTab({ users, st, theme }) {
+function UsersTab({ users, st, theme, reload }) {
+  const handleTogglePremium = async (userId, newValue) => {
+    try {
+      await toggleUserPremium(userId, newValue);
+      if (reload) await reload();
+    } catch (err) {
+      Alert.alert('Error', 'No se pudo cambiar el estado premium: ' + err.message);
+    }
+  };
+
   return (
     <View style={st.tabContent}>
       <Text style={st.sectionCount}>{users.length} usuarios registrados</Text>
       {users.map((user, i) => {
         const league = getLeagueForXP(user.xp || 0);
+        const isPremium = !!user.is_premium;
         return (
           <View key={user.id} style={st.userCard}>
             <View style={st.userCardHeader}>
@@ -225,7 +249,9 @@ function UsersTab({ users, st, theme }) {
                 </Text>
               </View>
               <View style={st.userCardInfo}>
-                <Text style={st.userCardName}>{user.name || 'Sin nombre'}</Text>
+                <Text style={st.userCardName}>
+                  {isPremium ? '👑 ' : ''}{user.name || 'Sin nombre'}
+                </Text>
                 <Text style={st.userCardEmail}>{user.email || '—'}</Text>
               </View>
               <View style={[st.leaguePill, { backgroundColor: league.color + '20', borderColor: league.color + '60' }]}>
@@ -238,6 +264,14 @@ function UsersTab({ users, st, theme }) {
               <UserStat label="Racha" value={`${user.streak || 0} dias`} st={st} />
               <UserStat label="Liga" value={getLeagueForXP(user.xp || 0).name} st={st} />
             </View>
+            <TouchableOpacity
+              style={[st.premiumToggle, isPremium && st.premiumToggleActive]}
+              onPress={() => handleTogglePremium(user.id, !isPremium)}
+            >
+              <Text style={[st.premiumToggleText, isPremium && st.premiumToggleTextActive]}>
+                {isPremium ? '👑 Premium activo' : 'Activar Premium'}
+              </Text>
+            </TouchableOpacity>
           </View>
         );
       })}
@@ -364,6 +398,12 @@ const makeStyles = (theme) => StyleSheet.create({
   userStatBox: { flex: 1, backgroundColor: theme.bgLight, borderRadius: 10, padding: 8, alignItems: 'center' },
   userStatVal: { fontSize: 14, fontWeight: '800', color: theme.white },
   userStatLabel: { fontSize: 9, color: theme.gray, fontWeight: '600', marginTop: 2 },
+
+  // Premium toggle
+  premiumToggle: { marginTop: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: theme.bgLight, alignItems: 'center', borderWidth: 1, borderColor: theme.border },
+  premiumToggleActive: { backgroundColor: '#FFD70020', borderColor: '#FFD70060' },
+  premiumToggleText: { fontSize: 12, fontWeight: '700', color: theme.gray },
+  premiumToggleTextActive: { color: '#FFD700' },
 
   // Workouts tab
   sessionCard: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: theme.bgCard, borderRadius: 14, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.border },

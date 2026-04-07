@@ -6,6 +6,8 @@ import { WEEKS, PHASE_COLORS } from '../../constants/program';
 import { loadState, loadProfile, saveState } from '../../constants/storage';
 import { useSettings } from '../../constants/SettingsContext';
 import { getTheme } from '../../constants/theme';
+import { fetchMyAssignmentsToday } from '../../constants/customWorkouts';
+import { getUnreadCount } from '../../constants/notifications';
 
 function getWeekTrainedDays(completedDays) {
   const today = new Date();
@@ -26,10 +28,14 @@ export default function HomeScreen() {
   const theme = getTheme(isDark);
   const [state, setState] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [customWorkouts, setCustomWorkouts] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useFocusEffect(useCallback(() => {
     loadState().then(setState);
     loadProfile().then(setProfile);
+    fetchMyAssignmentsToday().then(setCustomWorkouts).catch(() => {});
+    getUnreadCount().then(setUnreadCount).catch(() => {});
   }, []));
 
   if (!state) return (
@@ -60,9 +66,22 @@ export default function HomeScreen() {
               {t('home.week')} {state.currentWeek} · {weekData.phase}
             </Text>
           </View>
-          <View style={[s.streakBox, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
-            <Text style={[s.streakNum, { color: theme.white }]}>{state.streak}</Text>
-            <Text style={s.streakFire}>🔥</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity
+              onPress={() => router.push('/notifications')}
+              style={[s.bellBtn, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
+            >
+              <Text style={{ fontSize: 18 }}>🔔</Text>
+              {unreadCount > 0 && (
+                <View style={s.badge}>
+                  <Text style={s.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            <View style={[s.streakBox, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+              <Text style={[s.streakNum, { color: theme.white }]}>{state.streak}</Text>
+              <Text style={s.streakFire}>🔥</Text>
+            </View>
           </View>
         </View>
 
@@ -119,7 +138,53 @@ export default function HomeScreen() {
           <Text style={[s.weekName, { color: theme.white }]}>{weekData.name}</Text>
         </View>
 
-        {/* Workouts */}
+        {/* Custom workouts from trainer */}
+        {customWorkouts.length > 0 && (
+          <>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12, gap: 8 }}>
+              <Text style={[s.sectionTitle, { color: theme.accent, marginBottom: 0, paddingHorizontal: 0 }]}>📋 PERSONALIZADO</Text>
+              <View style={{ backgroundColor: theme.accent + '20', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: theme.accent }}>ENTRENADOR</Text>
+              </View>
+            </View>
+            {customWorkouts.map(a => {
+              const cw = a.custom_workouts;
+              if (!cw) return null;
+              const dayKey = `custom_${cw.id}_${today}`;
+              const done = state.completedDays?.includes(dayKey);
+              const exercises = cw.exercises || [];
+              return (
+                <TouchableOpacity
+                  key={a.id}
+                  style={[s.workoutCard, { backgroundColor: theme.bgCard, borderColor: theme.accent + '40' }, done && { opacity: 0.5 }]}
+                  onPress={() => !done && router.push({ pathname: '/workout', params: { customId: cw.id, customData: JSON.stringify(cw), assignmentNotes: a.notes || '' } })}
+                  activeOpacity={done ? 1 : 0.7}
+                >
+                  <View style={[s.dayBadge, { backgroundColor: done ? theme.bgLight : theme.accent }]}>
+                    <Text style={[s.dayNum, { color: done ? theme.gray : (isDark ? '#000' : '#fff') }]}>📋</Text>
+                  </View>
+                  <View style={s.workoutInfo}>
+                    <Text style={[s.workoutName, { color: theme.white }, done && { color: theme.gray }]}>
+                      {cw.name}
+                    </Text>
+                    <Text style={[s.workoutMeta, { color: theme.gray }]}>
+                      {exercises.length} {t('home.exercises')}
+                      {cw.xp_multiplier > 1 ? ` · ⚡ x${cw.xp_multiplier} XP` : ''}
+                    </Text>
+                    {a.notes ? <Text style={{ fontSize: 11, color: theme.accent, marginTop: 2 }}>💬 {a.notes}</Text> : null}
+                  </View>
+                  {done
+                    ? <Text style={s.checkmark}>✅</Text>
+                    : <Text style={[s.arrow, { color: theme.accent }]}>→</Text>
+                  }
+                </TouchableOpacity>
+              );
+            })}
+            <View style={{ height: 12 }} />
+          </>
+        )}
+
+        {/* Program Workouts */}
         <Text style={[s.sectionTitle, { color: theme.gray }]}>{t('home.workouts')}</Text>
         {weekData.workouts.map((w, i) => {
           const dayKey = `${w.id}_${today}`;
@@ -191,4 +256,30 @@ const s = StyleSheet.create({
   workoutMeta: { fontSize: 12 },
   checkmark: { fontSize: 20 },
   arrow: { fontSize: 20, fontWeight: '900' },
+  bellBtn: {
+    position: 'relative',
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#FF4444',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
 });

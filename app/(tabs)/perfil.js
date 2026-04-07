@@ -7,6 +7,7 @@ import { loadProfile, saveProfile, loadWeights, saveWeights, loadState } from '.
 import { useSettings } from '../../constants/SettingsContext';
 import { getTheme } from '../../constants/theme';
 import { supabase } from '../../constants/supabase';
+import { ACHIEVEMENT_DEFS, fetchMyAchievements } from '../../constants/achievements';
 
 export default function PerfilScreen() {
   const { settings, updateSettings, t, isDark } = useSettings();
@@ -16,6 +17,7 @@ export default function PerfilScreen() {
   const [profile, setProfile] = useState(null);
   const [weights, setWeights] = useState([]);
   const [state, setState] = useState(null);
+  const [myAchievements, setMyAchievements] = useState([]);
   const [editing, setEditing] = useState(false);
   const [newWeight, setNewWeight] = useState('');
   const [form, setForm] = useState({});
@@ -24,6 +26,7 @@ export default function PerfilScreen() {
     loadProfile().then(p => { setProfile(p); setForm(p); });
     loadWeights().then(setWeights);
     loadState().then(setState);
+    fetchMyAchievements().then(setMyAchievements).catch(() => {});
   }, []));
 
   async function pickPhoto() {
@@ -185,6 +188,42 @@ export default function PerfilScreen() {
               </View>
             ))}
             {weights.length === 0 && <Text style={[s.emptyText, { color: theme.gray }]}>{t('profile.firstWeight')} 👆</Text>}
+          </View>
+
+          {/* ── Achievements ── */}
+          <Text style={[s.sectionTitle, { color: theme.gray }]}>LOGROS</Text>
+          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {ACHIEVEMENT_DEFS.map(def => {
+                const unlocked = myAchievements.some(a => a.achievement_id === def.id);
+                const lang = settings.lang || 'es';
+                return (
+                  <TouchableOpacity
+                    key={def.id}
+                    style={{
+                      width: '30%', alignItems: 'center', padding: 10, borderRadius: 12,
+                      backgroundColor: unlocked ? theme.accent + '12' : theme.bgLight,
+                      borderWidth: 1, borderColor: unlocked ? theme.accent + '40' : 'transparent',
+                      opacity: unlocked ? 1 : 0.4,
+                    }}
+                    onPress={() => Alert.alert(
+                      `${def.icon} ${def.name[lang]}`,
+                      `${def.desc[lang]}${def.xp > 0 ? `\n\n+${def.xp} XP` : ''}${unlocked ? '\n\n✅ Desbloqueado' : ''}`,
+                    )}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ fontSize: 28, marginBottom: 4 }}>{def.icon}</Text>
+                    <Text style={{ fontSize: 10, fontWeight: '800', color: unlocked ? theme.accent : theme.gray, textAlign: 'center' }} numberOfLines={1}>
+                      {def.name[lang]}
+                    </Text>
+                    {unlocked && <Text style={{ fontSize: 8, color: theme.success, marginTop: 2 }}>✓</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={{ fontSize: 11, color: theme.gray, textAlign: 'center', marginTop: 12 }}>
+              {myAchievements.length} / {ACHIEVEMENT_DEFS.length}
+            </Text>
           </View>
 
           {/* ══════════════════════════════════════════════════════════
