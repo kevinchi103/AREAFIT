@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "AREAFIT",
+    "slug": "areafit",
+    "version": "1.0.0",
+    "scheme": "areafit",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": { "backgroundColor": "#0A0A0A" },
+    "ios": { "supportsTablet": false },
+    "android": { "adaptiveIcon": { "backgroundColor": "#0A0A0A" } },
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": false }
+  }
+}
