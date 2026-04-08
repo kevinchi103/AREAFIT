@@ -9,7 +9,7 @@
     "splash": { "backgroundColor": "#0A0A0A" },
     "ios": { "supportsTablet": false },
     "android": { "adaptiveIcon": { "backgroundColor": "#0A0A0A" } },
-    "plugins": ["expo-router", "expo-haptics"],
+    "plugins": ["expo-router"],
     "experiments": { "typedRoutes": false }
   }
 }
