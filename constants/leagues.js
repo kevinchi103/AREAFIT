@@ -1,5 +1,5 @@
 // constants/leagues.js
-// Sistema de ligas AREAFIT — adaptado al schema real de Supabase
+// Sistema de ligas HAB — adaptado al schema real de Supabase
 //
 // Schema real:
 //   users: id, name, email, xp, level, streak, is_premium, trust_score, current_week, avatar_url, created_at

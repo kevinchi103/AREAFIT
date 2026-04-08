@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createT, getDays } from './i18n';
 
-const SETTINGS_KEY = 'areafit_settings';
+const SETTINGS_KEY = 'hab_settings';
 
 const DEFAULT_SETTINGS = {
   lang: 'es',       // 'ca' | 'es' | 'en'

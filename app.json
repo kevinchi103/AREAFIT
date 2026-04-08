@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "AREAFIT",
-    "slug": "areafit",
+    "name": "HAB",
+    "slug": "hab",
     "version": "1.0.0",
-    "scheme": "areafit",
+    "scheme": "hab",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "splash": { "backgroundColor": "#0A0A0A" },
     "ios": { "supportsTablet": false },
     "android": { "adaptiveIcon": { "backgroundColor": "#0A0A0A" } },
-    "plugins": ["expo-router"],
+    "plugins": ["expo-router", "expo-haptics"],
     "experiments": { "typedRoutes": false }
   }
 }

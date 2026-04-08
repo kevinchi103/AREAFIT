@@ -1,11 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const KEYS = {
-  STATE:      'areafit_state',
-  PROFILE:    'areafit_profile',
-  WEIGHTS:    'areafit_weights',
-  HISTORY:    'areafit_history',
-  CHALLENGES: 'areafit_challenges',
+  STATE:      'hab_state',
+  PROFILE:    'hab_profile',
+  WEIGHTS:    'hab_weights',
+  HISTORY:    'hab_history',
+  CHALLENGES: 'hab_challenges',
 };
 
 export const DEFAULT_STATE = {
@@ -18,7 +18,10 @@ export const DEFAULT_STATE = {
   streak:              0,
   lastTrainDate:       null,
   testPassed:          false,
-  trainingEnvironment: 'home', // 'home' | 'gym'
+  trainingEnvironment: 'home',    // 'home' | 'gym'
+  fitnessLevel:        'mid',     // 'low' | 'mid' | 'high'
+  workoutDuration:     60,        // 30 | 60 | 90 minutos
+  daysPerWeek:         4,         // 3-5 días de entrenamiento
 };
 
 export const DEFAULT_PROFILE = {
@@ -26,9 +29,10 @@ export const DEFAULT_PROFILE = {
   photoUri:   null,
   height:     '',
   startWeight:'',
-  goal:       '',
-  benchPress: '', // kg en press banca (1RM aproximado)
-  squat:      '', // kg en sentadilla (1RM aproximado)
+  goal:       '',         // 'lose_weight' | 'gain_muscle' | 'get_fit' | 'maintain'
+  benchPress: '',
+  squat:      '',
+  availableTime: '60',    // minutos disponibles por sesión
 };
 
 export async function loadState() {

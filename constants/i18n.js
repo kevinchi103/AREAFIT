@@ -12,7 +12,7 @@ const translations = {
 
   // ─── LOGIN / REGISTER ────────────────────────────────────────
   auth: {
-    appName:            { ca: 'AREAFIT',                          es: 'AREAFIT',                          en: 'AREAFIT' },
+    appName:            { ca: 'HAB',                          es: 'HAB',                          en: 'HAB' },
     tagline:            { ca: 'La teva transformació en 20 setmanes', es: 'Tu transformacion en 20 semanas', en: 'Your transformation in 20 weeks' },
     createAccount:      { ca: 'Crear compte',                     es: 'Crear cuenta',                     en: 'Create account' },
     haveAccount:        { ca: 'Ja tinc compte',                   es: 'Ya tengo cuenta',                  en: 'I have an account' },

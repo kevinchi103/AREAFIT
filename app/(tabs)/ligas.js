@@ -1,5 +1,5 @@
 // app/(tabs)/ligas.js
-// Pantalla de ligas AREAFIT — ranking en tiempo real
+// Pantalla de ligas HAB — ranking en tiempo real
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import {

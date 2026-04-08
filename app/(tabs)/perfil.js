@@ -8,6 +8,7 @@ import { useSettings } from '../../constants/SettingsContext';
 import { getTheme } from '../../constants/theme';
 import { supabase } from '../../constants/supabase';
 import { ACHIEVEMENT_DEFS, fetchMyAchievements } from '../../constants/achievements';
+import { SUBSCRIPTION_TIERS } from '../../constants/premium';
 import { loadNotifPrefs, saveNotifPrefs, applyNotificationPrefs, requestNotificationPermission } from '../../constants/pushNotifications';
 
 export default function PerfilScreen() {
@@ -403,44 +404,46 @@ export default function PerfilScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ── Subscription ── */}
+          {/* ── Subscription Tiers ── */}
           <Text style={[s.sectionTitle, { color: theme.gray }]}>{t('profile.subscription')}</Text>
-          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
-            <View style={s.currentPlanRow}>
-              <Text style={[s.settingLabel, { color: theme.white, marginBottom: 0 }]}>{t('profile.currentPlan')}</Text>
-              <View style={[s.planBadge, { backgroundColor: settings.subscription === 'free' ? theme.bgLight : theme.accent + '22' }]}>
-                <Text style={[s.planBadgeText, { color: settings.subscription === 'free' ? theme.gray : theme.accent }]}>
-                  {settings.subscription === 'free' ? t('profile.free') : t('profile.premium')}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Subscription cards */}
-          <View style={s.subsCards}>
-            <TouchableOpacity
-              style={[s.subsCard, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
-              onPress={handleSubscription}
-              activeOpacity={0.7}
-            >
-              <Text style={[s.subsCardTitle, { color: theme.white }]}>{t('profile.monthly')}</Text>
-              <Text style={[s.subsCardPrice, { color: theme.accent }]}>14,99€</Text>
-              <Text style={[s.subsCardPeriod, { color: theme.gray }]}>{t('profile.perMonth')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.subsCard, { backgroundColor: theme.bgCard, borderColor: theme.accent }]}
-              onPress={handleSubscription}
-              activeOpacity={0.7}
-            >
-              <View style={[s.savingsBadge, { backgroundColor: theme.accent }]}>
-                <Text style={s.savingsText}>{t('profile.savingsPercent')}</Text>
-              </View>
-              <Text style={[s.subsCardTitle, { color: theme.white }]}>{t('profile.yearly')}</Text>
-              <Text style={[s.subsCardPrice, { color: theme.accent }]}>89,99€</Text>
-              <Text style={[s.subsCardPeriod, { color: theme.gray }]}>{t('profile.perYear')}</Text>
-              <Text style={[s.subsRecommended, { color: theme.accent }]}>{t('profile.recommended')}</Text>
-            </TouchableOpacity>
-          </View>
+          {SUBSCRIPTION_TIERS.map(tier => {
+            const lang = settings.lang || 'es';
+            const isCurrentTier = settings.subscription === tier.id || (!settings.subscription && tier.id === 'free');
+            return (
+              <TouchableOpacity
+                key={tier.id}
+                style={[s.card, {
+                  backgroundColor: theme.bgCard, borderColor: isCurrentTier ? tier.color : theme.border,
+                  borderWidth: isCurrentTier ? 2 : 1, marginBottom: 10,
+                }]}
+                onPress={() => tier.id !== 'free' && handleSubscription()}
+                activeOpacity={tier.id === 'free' ? 1 : 0.7}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={{ fontSize: 22 }}>{tier.icon}</Text>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: tier.color }}>{tier.name[lang]}</Text>
+                  </View>
+                  {isCurrentTier && (
+                    <View style={{ backgroundColor: tier.color + '22', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 3 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: tier.color }}>ACTUAL</Text>
+                    </View>
+                  )}
+                </View>
+                {tier.price > 0 && (
+                  <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginBottom: 8 }}>
+                    <Text style={{ fontSize: 24, fontWeight: '900', color: theme.white }}>{tier.price}€</Text>
+                    <Text style={{ fontSize: 12, color: theme.gray }}>/mes</Text>
+                    <Text style={{ fontSize: 12, color: theme.gray }}>·</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: theme.accent }}>{tier.priceYear}€/año</Text>
+                  </View>
+                )}
+                {(tier.features[lang] || tier.features.es).map((feat, i) => (
+                  <Text key={i} style={{ fontSize: 12, color: theme.grayLight, marginBottom: 3 }}>✓ {feat}</Text>
+                ))}
+              </TouchableOpacity>
+            );
+          })}
 
           {/* ══════════════════════════════════════════════════════════
               ACCOUNT SECTION
@@ -486,7 +489,7 @@ export default function PerfilScreen() {
           </TouchableOpacity>
 
           {/* App version */}
-          <Text style={[s.versionText, { color: theme.gray }]}>AREAFIT v1.0.0</Text>
+          <Text style={[s.versionText, { color: theme.gray }]}>HAB v1.0.0</Text>
 
           <View style={{ height: 40 }} />
         </ScrollView>

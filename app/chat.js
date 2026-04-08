@@ -11,7 +11,7 @@ import { getTheme } from '../constants/theme';
 
 // Respuestas automáticas del chatbot cuando el entrenador no está disponible
 const AUTO_REPLIES = [
-  '¡Hola! Soy el asistente de AREAFIT. El entrenador revisará tu mensaje pronto 💪',
+  '¡Hola! Soy el asistente de HAB. El entrenador revisará tu mensaje pronto 💪',
   'Recibido. El entrenador te responderá en las próximas horas 🏋️',
   '¡Buena pregunta! Te responderemos lo antes posible ⚡',
   'Mensaje recibido. Recuerda revisar tu plan de hoy en la pantalla principal 🔥',

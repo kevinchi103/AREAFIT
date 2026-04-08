@@ -2,7 +2,7 @@ import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-const PREFS_KEY = '@areafit_notif_prefs';
+const PREFS_KEY = '@hab_notif_prefs';
 
 // Notification IDs (for cancelling specific notifications)
 const IDS = {
@@ -28,7 +28,7 @@ Notifications.setNotificationHandler({
 export async function requestNotificationPermission() {
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
-      name: 'AREAFIT',
+      name: 'HAB',
       importance: Notifications.AndroidImportance.DEFAULT,
       vibrationPattern: [0, 250, 250, 250],
     });
