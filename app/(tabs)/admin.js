@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, ActivityIndicator, RefreshControl, Alert,
+  TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +11,7 @@ import { LEAGUES, getLeagueForXP } from '../../constants/leagues';
 import { useSettings } from '../../constants/SettingsContext';
 import { getTheme } from '../../constants/theme';
 import { toggleUserPremium } from '../../constants/premium';
+import { createNotification, createNotificationForAll } from '../../constants/notifications';
 
 export default function AdminScreen() {
   const router = useRouter();
@@ -22,6 +24,8 @@ export default function AdminScreen() {
   const [sessions, setSessions] = useState([]);
   const [stats, setStats] = useState({ totalUsers: 0, activeToday: 0, totalWorkouts: 0, totalXP: 0 });
   const [selectedTab, setSelectedTab] = useState('overview');
+  const [chatConvos, setChatConvos] = useState([]); // lista de usuarios con mensajes
+  const [unreadChats, setUnreadChats] = useState(0);
 
   useFocusEffect(useCallback(() => {
     checkAdminAndLoad();
@@ -68,6 +72,22 @@ export default function AdminScreen() {
       const activeToday = sessionsList.filter(s =>
         s.completed_at && s.completed_at.startsWith(today)
       ).length;
+
+      // Cargar últimos mensajes de cada usuario (agrupados)
+      const { data: chatData } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      // Agrupar por user_id — último mensaje de cada usuario
+      const convoMap = {};
+      (chatData || []).forEach(msg => {
+        if (!convoMap[msg.user_id]) convoMap[msg.user_id] = msg;
+      });
+      const convos = Object.values(convoMap);
+      setChatConvos(convos);
+      setUnreadChats(convos.filter(c => !c.is_from_trainer && !c.read).length);
 
       setUsers(usersList);
       setSessions(sessionsList);
@@ -123,16 +143,22 @@ export default function AdminScreen() {
         <Text style={{ fontSize: 18, color: isDark ? '#000' : '#fff' }}>→</Text>
       </TouchableOpacity>
 
-      {/* Tabs */}
+      {/* Tabs — row 1 */}
       <View style={st.tabRow}>
-        {['overview', 'users', 'workouts'].map(tab => (
+        {[
+          { key: 'overview',  label: 'General' },
+          { key: 'users',     label: 'Usuarios' },
+          { key: 'workouts',  label: 'Entrenos' },
+          { key: 'chats',     label: `Chat${unreadChats > 0 ? ` (${unreadChats})` : ''}` },
+          { key: 'notifs',    label: '🔔 Notifs' },
+        ].map(({ key, label }) => (
           <TouchableOpacity
-            key={tab}
-            style={[st.tab, selectedTab === tab && st.tabActive]}
-            onPress={() => setSelectedTab(tab)}
+            key={key}
+            style={[st.tab, selectedTab === key && st.tabActive]}
+            onPress={() => setSelectedTab(key)}
           >
-            <Text style={[st.tabText, selectedTab === tab && st.tabTextActive]}>
-              {tab === 'overview' ? 'General' : tab === 'users' ? 'Usuarios' : 'Entrenos'}
+            <Text style={[st.tabText, selectedTab === key && st.tabTextActive]}>
+              {label}
             </Text>
           </TouchableOpacity>
         ))}
@@ -145,6 +171,8 @@ export default function AdminScreen() {
         {selectedTab === 'overview' && <OverviewTab stats={stats} users={users} st={st} theme={theme} />}
         {selectedTab === 'users' && <UsersTab users={users} st={st} theme={theme} reload={loadAllData} />}
         {selectedTab === 'workouts' && <WorkoutsTab sessions={sessions} users={users} st={st} theme={theme} />}
+        {selectedTab === 'chats' && <ChatsTab convos={chatConvos} users={users} st={st} theme={theme} reload={loadAllData} />}
+        {selectedTab === 'notifs' && <NotifsTab users={users} st={st} theme={theme} />}
         <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
@@ -333,6 +361,301 @@ function WorkoutsTab({ sessions, users, st, theme }) {
   );
 }
 
+// ─── Chats Tab ───────────────────────────────────────────────────
+function ChatsTab({ convos, users, st, theme, reload }) {
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [reply, setReply] = useState('');
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef(null);
+
+  const userMap = {};
+  users.forEach(u => { userMap[u.id] = u.name || u.email || 'Usuario'; });
+
+  async function openConvo(userId) {
+    setSelectedUser(userId);
+    const { data } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+    setMessages(data || []);
+    // Marcar como leídos
+    await supabase
+      .from('chat_messages')
+      .update({ read: true })
+      .eq('user_id', userId)
+      .eq('is_from_trainer', false);
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 100);
+  }
+
+  async function sendReply() {
+    if (!reply.trim() || !selectedUser || sending) return;
+    setSending(true);
+    await supabase.from('chat_messages').insert({
+      user_id: selectedUser,
+      content: reply.trim(),
+      is_from_trainer: true,
+      read: false,
+    });
+    setReply('');
+    await openConvo(selectedUser);
+    if (reload) reload();
+    setSending(false);
+  }
+
+  if (selectedUser) {
+    const userName = userMap[selectedUser] || 'Usuario';
+    return (
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={120}
+      >
+        <View style={st.tabContent}>
+          {/* Back */}
+          <TouchableOpacity onPress={() => setSelectedUser(null)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, paddingTop: 4 }}>
+            <Text style={{ color: theme.accent, fontSize: 16 }}>←</Text>
+            <Text style={{ color: theme.accent, fontWeight: '700', fontSize: 14 }}>{userName}</Text>
+          </TouchableOpacity>
+
+          {/* Messages */}
+          <ScrollView
+            ref={scrollRef}
+            style={{ maxHeight: 420, marginBottom: 12 }}
+            showsVerticalScrollIndicator={false}
+            onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
+          >
+            {messages.map((msg, i) => {
+              const isTrainer = msg.is_from_trainer;
+              return (
+                <View key={msg.id || i} style={[{ marginBottom: 8, alignItems: isTrainer ? 'flex-end' : 'flex-start' }]}>
+                  <View style={{
+                    maxWidth: '75%', padding: 10, borderRadius: 14,
+                    backgroundColor: isTrainer ? theme.accent : theme.bgCard,
+                    borderBottomRightRadius: isTrainer ? 4 : 14,
+                    borderBottomLeftRadius: isTrainer ? 14 : 4,
+                  }}>
+                    <Text style={{ color: isTrainer ? '#000' : theme.white, fontSize: 13 }}>{msg.content}</Text>
+                    <Text style={{ color: isTrainer ? '#00000066' : theme.gray, fontSize: 9, marginTop: 3, textAlign: 'right' }}>
+                      {msg.created_at ? new Date(msg.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : ''}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </ScrollView>
+
+          {/* Reply input */}
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-end' }}>
+            <TextInput
+              style={[st.chatInput, { color: theme.white, backgroundColor: theme.bgLight, flex: 1 }]}
+              placeholder="Responder..."
+              placeholderTextColor={theme.gray}
+              value={reply}
+              onChangeText={setReply}
+              multiline
+              maxLength={500}
+            />
+            <TouchableOpacity
+              style={[st.chatSendBtn, { backgroundColor: reply.trim() ? theme.accent : theme.bgLight }]}
+              onPress={sendReply}
+              disabled={!reply.trim() || sending}
+            >
+              <Text style={{ fontSize: 18 }}>{sending ? '⏳' : '➤'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  return (
+    <View style={st.tabContent}>
+      <Text style={st.sectionCount}>{convos.length} conversaciones</Text>
+      {convos.length === 0 && (
+        <View style={st.emptyBox}>
+          <Text style={st.emptyIcon}>💬</Text>
+          <Text style={st.emptyTitle}>Sin mensajes</Text>
+          <Text style={st.emptyText}>Los usuarios premium podrán escribirte aquí</Text>
+        </View>
+      )}
+      {convos.map((c, i) => {
+        const hasUnread = !c.is_from_trainer && !c.read;
+        const userName = userMap[c.user_id] || 'Usuario';
+        const time = c.created_at
+          ? new Date(c.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+          : '';
+        return (
+          <TouchableOpacity
+            key={c.user_id || i}
+            style={[st.convoCard, hasUnread && { borderColor: theme.accent + '80', backgroundColor: theme.accent + '08' }]}
+            onPress={() => openConvo(c.user_id)}
+          >
+            <View style={[st.convoAvatar, { backgroundColor: hasUnread ? theme.accent : theme.bgLight }]}>
+              <Text style={{ fontWeight: '900', color: hasUnread ? '#000' : theme.gray, fontSize: 16 }}>
+                {userName[0].toUpperCase()}
+              </Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={[st.convoName, hasUnread && { color: theme.white }]}>{userName}</Text>
+                <Text style={{ color: theme.gray, fontSize: 11 }}>{time}</Text>
+              </View>
+              <Text style={[st.convoPreview, hasUnread && { color: theme.grayLight, fontWeight: '700' }]} numberOfLines={1}>
+                {c.is_from_trainer ? '✓ Tú: ' : ''}{c.content}
+              </Text>
+            </View>
+            {hasUnread && <View style={[st.unreadDot, { backgroundColor: theme.accent }]} />}
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+// ─── Notifications Tab ───────────────────────────────────────────
+function NotifsTab({ users, st, theme }) {
+  const [title, setTitle]           = useState('');
+  const [body, setBody]             = useState('');
+  const [type, setType]             = useState('info');
+  const [targetUser, setTargetUser] = useState(null); // null = all
+  const [sending, setSending]       = useState(false);
+  const [sent, setSent]             = useState(false);
+
+  const TYPES = [
+    { id: 'info',        label: 'Info',     icon: 'ℹ️' },
+    { id: 'achievement', label: 'Logro',    icon: '🎖️' },
+    { id: 'trainer',     label: 'Trainer',  icon: '📋' },
+    { id: 'reminder',    label: 'Recordat', icon: '⏰' },
+  ];
+
+  async function handleSend() {
+    if (!title.trim() || !body.trim()) {
+      Alert.alert('Campos requeridos', 'Escribe título y mensaje');
+      return;
+    }
+    setSending(true);
+    setSent(false);
+    try {
+      if (targetUser) {
+        await createNotification({ userId: targetUser, type, title: title.trim(), body: body.trim() });
+      } else {
+        await createNotificationForAll({ type, title: title.trim(), body: body.trim() });
+      }
+      setSent(true);
+      setTitle('');
+      setBody('');
+      setTimeout(() => setSent(false), 3000);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    }
+    setSending(false);
+  }
+
+  return (
+    <View style={st.tabContent}>
+      {/* Tipo */}
+      <Text style={[st.cardTitle, { marginBottom: 8, marginTop: 4 }]}>TIPO DE NOTIFICACIÓN</Text>
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {TYPES.map(t => (
+          <TouchableOpacity
+            key={t.id}
+            onPress={() => setType(t.id)}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+              borderWidth: 1,
+              borderColor: type === t.id ? theme.accent : theme.border,
+              backgroundColor: type === t.id ? theme.accent + '15' : theme.bgCard,
+            }}
+          >
+            <Text style={{ fontSize: 14 }}>{t.icon}</Text>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: type === t.id ? theme.accent : theme.gray }}>{t.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Destinatario */}
+      <Text style={[st.cardTitle, { marginBottom: 8 }]}>DESTINATARIO</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            onPress={() => setTargetUser(null)}
+            style={{
+              paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+              borderWidth: 1,
+              borderColor: !targetUser ? theme.accent : theme.border,
+              backgroundColor: !targetUser ? theme.accent + '15' : theme.bgCard,
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '700', color: !targetUser ? theme.accent : theme.gray }}>
+              👥 Todos ({users.length})
+            </Text>
+          </TouchableOpacity>
+          {users.map(u => (
+            <TouchableOpacity
+              key={u.id}
+              onPress={() => setTargetUser(u.id)}
+              style={{
+                paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+                borderWidth: 1,
+                borderColor: targetUser === u.id ? theme.accent : theme.border,
+                backgroundColor: targetUser === u.id ? theme.accent + '15' : theme.bgCard,
+              }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: targetUser === u.id ? theme.accent : theme.gray }}>
+                {u.name || u.email || 'Usuario'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+
+      {/* Título */}
+      <Text style={[st.cardTitle, { marginBottom: 8 }]}>TÍTULO</Text>
+      <TextInput
+        style={[st.notifInput, { color: theme.white, backgroundColor: theme.bgCard, borderColor: theme.border }]}
+        placeholder="Título de la notificación"
+        placeholderTextColor={theme.gray}
+        value={title}
+        onChangeText={setTitle}
+        maxLength={80}
+      />
+
+      {/* Mensaje */}
+      <Text style={[st.cardTitle, { marginBottom: 8, marginTop: 12 }]}>MENSAJE</Text>
+      <TextInput
+        style={[st.notifInput, st.notifInputMulti, { color: theme.white, backgroundColor: theme.bgCard, borderColor: theme.border }]}
+        placeholder="Texto del mensaje..."
+        placeholderTextColor={theme.gray}
+        value={body}
+        onChangeText={setBody}
+        maxLength={300}
+        multiline
+        numberOfLines={4}
+      />
+
+      {/* Send button */}
+      <TouchableOpacity
+        onPress={handleSend}
+        disabled={sending || !title.trim() || !body.trim()}
+        style={{
+          marginTop: 16,
+          paddingVertical: 16,
+          borderRadius: 14,
+          backgroundColor: sent ? '#00CC66' : (sending || !title.trim() || !body.trim()) ? theme.bgLight : theme.accent,
+          alignItems: 'center',
+        }}
+      >
+        <Text style={{ fontSize: 15, fontWeight: '800', color: sent ? '#fff' : '#000' }}>
+          {sent ? '✓ Enviado' : sending ? 'Enviando...' : `Enviar a ${targetUser ? '1 usuario' : `todos (${users.length})`}`}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 // ─── Estilos ─────────────────────────────────────────────────────
 const makeStyles = (theme) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.bg },
@@ -419,4 +742,17 @@ const makeStyles = (theme) => StyleSheet.create({
   emptyIcon: { fontSize: 48 },
   emptyTitle: { fontSize: 18, fontWeight: '800', color: theme.white },
   emptyText: { fontSize: 13, color: theme.gray, textAlign: 'center' },
+
+  // Chats
+  convoCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: theme.bgCard, borderRadius: 14, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.border },
+  convoAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  convoName: { fontSize: 14, fontWeight: '700', color: theme.gray, marginBottom: 2 },
+  convoPreview: { fontSize: 12, color: theme.gray },
+  unreadDot: { width: 10, height: 10, borderRadius: 5 },
+  chatInput: { borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, maxHeight: 80 },
+  chatSendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+
+  // Notifs tab
+  notifInput: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, borderWidth: 1 },
+  notifInputMulti: { height: 100, textAlignVertical: 'top' },
 });

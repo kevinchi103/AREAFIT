@@ -310,6 +310,52 @@ CREATE POLICY "Public read leagues" ON leagues
   FOR SELECT USING (true);
 
 -- ============================================================
+-- CHAT ENTRENADOR PERSONAL
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id          uuid REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  content          text NOT NULL,
+  is_from_trainer  boolean DEFAULT false,
+  read             boolean DEFAULT false,
+  created_at       timestamptz DEFAULT now()
+);
+
+-- Index para consultas rápidas por usuario
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id ON chat_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at);
+
+-- RLS: usuarios solo ven sus propios mensajes
+ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users see own messages"
+  ON chat_messages FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users insert own messages"
+  ON chat_messages FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users update own messages (mark read)"
+  ON chat_messages FOR UPDATE
+  USING (auth.uid() = user_id);
+
+-- Admin puede ver y escribir en todos los chats
+CREATE POLICY "Admin full access"
+  ON chat_messages FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM users
+      WHERE users.id = auth.uid()
+      AND users.email = 'kevinchi_90@hotmail.com'
+    )
+  );
+
+-- Realtime habilitado para esta tabla
+ALTER PUBLICATION supabase_realtime ADD TABLE chat_messages;
+
+-- ============================================================
 -- ¡LISTO! Ejecuta este SQL completo en Supabase SQL Editor
 -- Después registrate con kevinchi_90@hotmail.com en la app
 -- y tu usuario será marcado como admin automáticamente

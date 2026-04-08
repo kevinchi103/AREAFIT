@@ -3,11 +3,12 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Image,
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { loadProfile, saveProfile, loadWeights, saveWeights, loadState } from '../../constants/storage';
+import { loadProfile, saveProfile, loadWeights, saveWeights, loadState, saveState } from '../../constants/storage';
 import { useSettings } from '../../constants/SettingsContext';
 import { getTheme } from '../../constants/theme';
 import { supabase } from '../../constants/supabase';
 import { ACHIEVEMENT_DEFS, fetchMyAchievements } from '../../constants/achievements';
+import { loadNotifPrefs, saveNotifPrefs, applyNotificationPrefs, requestNotificationPermission } from '../../constants/pushNotifications';
 
 export default function PerfilScreen() {
   const { settings, updateSettings, t, isDark } = useSettings();
@@ -21,12 +22,15 @@ export default function PerfilScreen() {
   const [editing, setEditing] = useState(false);
   const [newWeight, setNewWeight] = useState('');
   const [form, setForm] = useState({});
+  const [appState, setAppState] = useState(null);
+  const [notifPrefs, setNotifPrefs] = useState(null);
 
   useFocusEffect(useCallback(() => {
     loadProfile().then(p => { setProfile(p); setForm(p); });
     loadWeights().then(setWeights);
-    loadState().then(setState);
+    loadState().then(s => { setState(s); setAppState(s); });
     fetchMyAchievements().then(setMyAchievements).catch(() => {});
+    loadNotifPrefs().then(setNotifPrefs);
   }, []));
 
   async function pickPhoto() {
@@ -55,6 +59,22 @@ export default function PerfilScreen() {
     setWeights(updated);
     await saveWeights(updated);
     setNewWeight('');
+  }
+
+  async function updateNotifPrefs(patch) {
+    const updated = { ...notifPrefs, ...patch };
+    setNotifPrefs(updated);
+    await saveNotifPrefs(updated);
+    const granted = await requestNotificationPermission();
+    if (granted) {
+      await applyNotificationPrefs(updated, appState?.streak || 0);
+    }
+  }
+
+  async function changeEnvironment(env) {
+    const s = { ...appState, trainingEnvironment: env };
+    setAppState(s);
+    await saveState(s);
   }
 
   function handleLogout() {
@@ -152,7 +172,9 @@ export default function PerfilScreen() {
               { label: t('profile.name'), field: 'name' },
               { label: t('profile.height'), field: 'height', keyboardType: 'numeric' },
               { label: t('profile.startWeight'), field: 'startWeight', keyboardType: 'numeric' },
-              { label: t('profile.goal'), field: 'goal', last: true },
+              { label: t('profile.goal'), field: 'goal' },
+              { label: '🏋️ Press banca (kg)', field: 'benchPress', keyboardType: 'numeric' },
+              { label: '🦵 Sentadilla (kg)', field: 'squat', keyboardType: 'numeric', last: true },
             ].map(({ label, field, keyboardType, last }) => (
               <View key={field} style={[s.row, { borderBottomColor: theme.border }, last && { borderBottomWidth: 0 }]}>
                 <Text style={[s.rowLabel, { color: theme.gray }]}>{label}</Text>
@@ -231,6 +253,25 @@ export default function PerfilScreen() {
              ══════════════════════════════════════════════════════════ */}
           <Text style={[s.sectionTitle, { color: theme.gray }]}>{t('profile.settings')}</Text>
 
+          {/* ── Training Environment ── */}
+          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+            <Text style={[s.settingLabel, { color: theme.white }]}>Entorno de entrenamiento</Text>
+            <View style={[s.pillRow, { marginBottom: 14 }]}>
+              <TouchableOpacity
+                onPress={() => changeEnvironment('home')}
+                style={[s.pill, s.pillHalf, { borderColor: appState?.trainingEnvironment !== 'gym' ? theme.accent : theme.border, backgroundColor: appState?.trainingEnvironment !== 'gym' ? theme.accent + '22' : 'transparent' }]}
+              >
+                <Text style={[s.pillText, { color: appState?.trainingEnvironment !== 'gym' ? theme.accent : theme.gray }]}>🏠 Casa</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => changeEnvironment('gym')}
+                style={[s.pill, s.pillHalf, { borderColor: appState?.trainingEnvironment === 'gym' ? theme.accent : theme.border, backgroundColor: appState?.trainingEnvironment === 'gym' ? theme.accent + '22' : 'transparent' }]}
+              >
+                <Text style={[s.pillText, { color: appState?.trainingEnvironment === 'gym' ? theme.accent : theme.gray }]}>🏋️ Gimnasio</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
           {/* ── Language ── */}
           <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
             <Text style={[s.settingLabel, { color: theme.white }]}>{t('profile.language')}</Text>
@@ -279,21 +320,87 @@ export default function PerfilScreen() {
           </View>
 
           {/* ── Notifications ── */}
-          <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
-            <View style={s.switchRow}>
-              <Text style={[s.settingLabel, { color: theme.white, marginBottom: 0 }]}>{t('profile.notifications')}</Text>
-              <View style={s.switchRight}>
-                <Text style={[s.switchLabel, { color: theme.gray }]}>
-                  {settings.notifications ? t('profile.on') : t('profile.off')}
-                </Text>
+          {notifPrefs && (
+            <View style={[s.card, { backgroundColor: theme.bgCard, borderColor: theme.border, paddingVertical: 4 }]}>
+              {/* Daily reminder toggle */}
+              <View style={[s.switchRow, { paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: theme.white, marginBottom: 0 }]}>⏰ Recordatorio diario</Text>
+                  <Text style={{ fontSize: 11, color: theme.gray, marginTop: 2 }}>Recibe un aviso para entrenar cada día</Text>
+                </View>
                 <Switch
-                  value={settings.notifications}
-                  onValueChange={v => updateSettings({ notifications: v })}
+                  value={notifPrefs.dailyReminderEnabled}
+                  onValueChange={v => updateNotifPrefs({ dailyReminderEnabled: v })}
                   trackColor={{ false: theme.border, true: theme.accent + '66' }}
-                  thumbColor={settings.notifications ? theme.accent : theme.gray}
+                  thumbColor={notifPrefs.dailyReminderEnabled ? theme.accent : theme.gray}
+                />
+              </View>
+
+              {/* Reminder time */}
+              {notifPrefs.dailyReminderEnabled && (
+                <View style={[s.switchRow, { paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: theme.border }]}>
+                  <Text style={[s.settingLabel, { color: theme.white, marginBottom: 0 }]}>Hora del aviso</Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {[7, 12, 17, 18, 20, 22].map(h => (
+                      <TouchableOpacity
+                        key={h}
+                        onPress={() => updateNotifPrefs({ dailyReminderHour: h, dailyReminderMinute: 0 })}
+                        style={{
+                          paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10,
+                          backgroundColor: notifPrefs.dailyReminderHour === h ? theme.accent + '22' : theme.bgLight,
+                          borderWidth: 1,
+                          borderColor: notifPrefs.dailyReminderHour === h ? theme.accent : 'transparent',
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: notifPrefs.dailyReminderHour === h ? theme.accent : theme.gray }}>
+                          {h}h
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Streak warning toggle */}
+              <View style={[s.switchRow, { paddingVertical: 14 }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: theme.white, marginBottom: 0 }]}>🔥 Aviso de racha</Text>
+                  <Text style={{ fontSize: 11, color: theme.gray, marginTop: 2 }}>Alerta a las 21h si no has entrenado</Text>
+                </View>
+                <Switch
+                  value={notifPrefs.streakWarningEnabled}
+                  onValueChange={v => updateNotifPrefs({ streakWarningEnabled: v })}
+                  trackColor={{ false: theme.border, true: theme.accent + '66' }}
+                  thumbColor={notifPrefs.streakWarningEnabled ? theme.accent : theme.gray}
                 />
               </View>
             </View>
+          )}
+
+          {/* ── Accesos rápidos ── */}
+          <Text style={[s.sectionTitle, { color: theme.gray }]}>HERRAMIENTAS</Text>
+          <View style={{ flexDirection: 'row', gap: 10, marginHorizontal: 20, marginBottom: 14 }}>
+            <TouchableOpacity
+              style={[s.toolBtn, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
+              onPress={() => router.push('/historial')}
+            >
+              <Text style={{ fontSize: 24 }}>📊</Text>
+              <Text style={[s.toolBtnText, { color: theme.white }]}>Historial</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.toolBtn, { backgroundColor: theme.bgCard, borderColor: theme.border }]}
+              onPress={() => router.push('/retos')}
+            >
+              <Text style={{ fontSize: 24 }}>🎯</Text>
+              <Text style={[s.toolBtnText, { color: theme.white }]}>Retos</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.toolBtn, { backgroundColor: theme.bgCard, borderColor: theme.accent + '60' }]}
+              onPress={() => router.push('/chat')}
+            >
+              <Text style={{ fontSize: 24 }}>💬</Text>
+              <Text style={[s.toolBtnText, { color: theme.accent }]}>Entrenador</Text>
+            </TouchableOpacity>
           </View>
 
           {/* ── Subscription ── */}
@@ -451,4 +558,6 @@ const s = StyleSheet.create({
   accountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14 },
   accountRowText: { fontSize: 15, fontWeight: '700' },
   versionText: { textAlign: 'center', fontSize: 12, fontWeight: '600', marginTop: 10, marginBottom: 4 },
+  toolBtn: { flex: 1, borderRadius: 14, padding: 14, alignItems: 'center', gap: 6, borderWidth: 1 },
+  toolBtnText: { fontSize: 11, fontWeight: '800' },
 });

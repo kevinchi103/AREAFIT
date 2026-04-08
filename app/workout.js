@@ -7,7 +7,9 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WEEKS, PHASE_COLORS } from '../constants/program';
-import { loadState, saveState } from '../constants/storage';
+import { GYM_WEEKS, GYM_PHASE_COLORS } from '../constants/gymProgram';
+import { loadState, saveState, loadProfile, saveSession } from '../constants/storage';
+import { buildStructuredSession, getWeightHint, PHASE_META } from '../constants/sessionStructure';
 import { calcWorkoutXP, syncXPToSupabase, saveWorkoutSession } from '../constants/leagues';
 import { useSettings } from '../constants/SettingsContext';
 import { getTheme } from '../constants/theme';
@@ -16,6 +18,7 @@ import { checkAndUnlockAchievements } from '../constants/achievements';
 import AchievementToast from '../constants/AchievementToast';
 import XPToast from '../constants/XPToast';
 import StreakToast from '../constants/StreakToast';
+import { cancelStreakWarning } from '../constants/pushNotifications';
 
 // ─── Ilustraciones de ejercicios (stick figure con Views) ────────
 const EXERCISE_ILLUSTRATIONS = {
@@ -397,6 +400,29 @@ function formatTime(seconds) {
   return `${s}`;
 }
 
+// Auto-detecta qué modo usar según la descripción de reps
+function detectMode(repsStr) {
+  if (!repsStr) return 'manual';
+  const r = repsStr.toLowerCase().trim();
+  if (r.includes('máx') || r.includes('amrap') || r.includes('quieras') ||
+      r.includes('hazlas') || r.includes('relájate') || r.includes('intentos') ||
+      r.includes('en sets') || r.includes('tiempo') || r.includes('total') ||
+      r.includes('libre')) return 'manual';
+  if (/\d+\s*(seg|min|s\b)/.test(r) || r.includes('rondas')) return 'timer';
+  return 'reps';
+}
+
+// Extrae el número objetivo de reps de una cadena como "3x12", "15 reps", "10 c/lado"
+function parseRepTarget(repsStr) {
+  if (!repsStr) return null;
+  const r = repsStr.toLowerCase().trim();
+  const setReps = r.match(/\d+x(\d+)/);
+  if (setReps) return parseInt(setReps[1]);
+  const plain = r.match(/^(\d+)/);
+  if (plain) return parseInt(plain[1]);
+  return null;
+}
+
 // ─── Componente principal ────────────────────────────────────────
 export default function WorkoutScreen() {
   const router = useRouter();
@@ -427,7 +453,10 @@ export default function WorkoutScreen() {
     } catch {}
   } else {
     const weekIndex = parseInt(params.week) || 0;
-    const weekData = WEEKS[Math.min(weekIndex, WEEKS.length - 1)];
+    // Detect gym workouts by id suffix
+    const isGymWorkout = params.id?.endsWith('_gym');
+    const programWeeks = isGymWorkout ? GYM_WEEKS : WEEKS;
+    const weekData = programWeeks[Math.min(weekIndex, programWeeks.length - 1)];
     workout = weekData?.workouts.find(w => w.id === params.id);
   }
 
@@ -444,6 +473,18 @@ export default function WorkoutScreen() {
   const [earnedXP, setEarnedXP] = useState(0);
   const [showStreakToast, setShowStreakToast] = useState(false);
   const [newStreak, setNewStreak] = useState(0);
+  const [trainingEnv, setTrainingEnv] = useState('home');
+  const [strengthData, setStrengthData] = useState(null);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [structuredWorkout, setStructuredWorkout] = useState(null);
+
+  // ── Modos de ejecución ──
+  const [execMode, setExecMode] = useState('reps'); // 'reps' | 'manual' | 'timer'
+  const [repCount, setRepCount] = useState(0);
+  const [repTarget, setRepTarget] = useState(null);
+  const [manualElapsed, setManualElapsed] = useState(0);
+  const [manualRunning, setManualRunning] = useState(false);
+  const manualInterval = useRef(null);
 
   // Exercise timer
   const [exerciseTime, setExerciseTime] = useState(0);
@@ -454,9 +495,25 @@ export default function WorkoutScreen() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const restInterval = useRef(null);
   const exerciseInterval = useRef(null);
+  const workoutStartTime = useRef(Date.now());
+  const [sessionDuration, setSessionDuration] = useState(0); // segundos
+  const [postFeedbackRating, setPostFeedbackRating] = useState(0); // 1-5 estrellas
+  const [postFeedbackEnergy, setPostFeedbackEnergy] = useState(0);
 
   const weekData = !isCustom ? WEEKS[Math.min(parseInt(params.week) || 0, WEEKS.length - 1)] : null;
   const phaseColor = weekData ? (PHASE_COLORS[weekData.phase] || theme.accent) : theme.accent;
+
+  // Cargar entorno y datos de fuerza, luego construir sesión estructurada
+  useEffect(() => {
+    if (!workout) return;
+    Promise.all([loadState(), loadProfile()]).then(([st, prof]) => {
+      const env = st?.trainingEnvironment || 'home';
+      setTrainingEnv(env);
+      setStrengthData({ benchPress: prof?.benchPress, squat: prof?.squat });
+      setStructuredWorkout(buildStructuredSession(workout, env));
+      setSessionReady(true);
+    });
+  }, []);
 
   // Animacion de progreso
   useEffect(() => {
@@ -467,16 +524,23 @@ export default function WorkoutScreen() {
     }).start();
   }, [completedExs.length]);
 
-  // Reset timer al cambiar de ejercicio
+  // Reset al cambiar de ejercicio
   useEffect(() => {
     clearInterval(exerciseInterval.current);
-    if (!workout) return;
-    const ex = workout.exercises[currentEx];
+    clearInterval(manualInterval.current);
+    const ex = (structuredWorkout || workout)?.exercises[currentEx];
     const duration = parseExerciseDuration(ex?.reps);
     setExerciseTime(duration || 0);
     setTimerRunning(false);
     setTimerStarted(false);
-  }, [currentEx]);
+    // Reset modos
+    const mode = detectMode(ex?.reps);
+    setExecMode(mode);
+    setRepCount(0);
+    setRepTarget(parseRepTarget(ex?.reps));
+    setManualElapsed(0);
+    setManualRunning(false);
+  }, [currentEx, sessionReady]);
 
   // Exercise countdown
   useEffect(() => {
@@ -514,6 +578,18 @@ export default function WorkoutScreen() {
     return () => clearInterval(restInterval.current);
   }, [resting, restTime]);
 
+  // Cronómetro modo manual (cuenta hacia arriba)
+  useEffect(() => {
+    if (manualRunning) {
+      manualInterval.current = setInterval(() => {
+        setManualElapsed(t => t + 1);
+      }, 1000);
+    } else {
+      clearInterval(manualInterval.current);
+    }
+    return () => clearInterval(manualInterval.current);
+  }, [manualRunning]);
+
   if (!workout) {
     return (
       <SafeAreaView style={[st.safe, { backgroundColor: theme.bg }]}>
@@ -527,7 +603,18 @@ export default function WorkoutScreen() {
     );
   }
 
-  const exercises = workout.exercises;
+  if (!sessionReady || !structuredWorkout) {
+    return (
+      <SafeAreaView style={[st.safe, { backgroundColor: theme.bg }]}>
+        <View style={st.center}>
+          <Text style={[st.errorText, { color: theme.gray }]}>Preparando sesión...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const activeWorkout = structuredWorkout;
+  const exercises = activeWorkout.exercises;
   const exercise = exercises[currentEx];
   const illustration = EXERCISE_ILLUSTRATIONS[exercise.name] || DEFAULT_ILLUSTRATION;
   const duration = parseExerciseDuration(exercise.reps);
@@ -546,7 +633,18 @@ export default function WorkoutScreen() {
     setTimerRunning(false);
   };
 
+  const handleRepTap = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const next = repCount + 1;
+    setRepCount(next);
+    if (repTarget && next >= repTarget) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+  };
+
   const handleCompleteExercise = () => {
+    setManualRunning(false);
+    clearInterval(manualInterval.current);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     clearInterval(exerciseInterval.current);
     setTimerRunning(false);
@@ -555,6 +653,7 @@ export default function WorkoutScreen() {
     setCompletedExs(newCompleted);
 
     if (newCompleted.length >= exercises.length) {
+      setSessionDuration(Math.round((Date.now() - workoutStartTime.current) / 1000));
       setFinished(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } else {
@@ -575,12 +674,6 @@ export default function WorkoutScreen() {
   };
 
   const handleFinishWorkout = async () => {
-    // For custom workouts, show feedback first
-    if (isCustom && !showFeedback) {
-      setShowFeedback(true);
-      return;
-    }
-
     const state = await loadState();
     const today = new Date().toDateString();
     const workoutId = isCustom ? `custom_${params.customId}` : params.id;
@@ -598,29 +691,43 @@ export default function WorkoutScreen() {
         lastTrainDate: today,
       };
       await saveState(newState);
-      // Show toasts
       setEarnedXP(xpEarned);
       setShowXPToast(true);
       setNewStreak(newState.streak);
       setShowStreakToast(true);
 
+      // Guardar sesión en historial
+      await saveSession({
+        id: Date.now(),
+        date: new Date().toLocaleDateString('es-ES'),
+        dateStr: today,
+        workoutId,
+        workoutName: activeWorkout?.name || '',
+        workoutEmoji: activeWorkout?.emoji || '💪',
+        duration: sessionDuration,
+        exercisesDone: exercises.length,
+        xpEarned,
+        streak: newState.streak,
+        rating: postFeedbackRating || 3,
+        energy: postFeedbackEnergy || 3,
+        environment: trainingEnv,
+      });
+
       saveWorkoutSession(workoutId, xpEarned, state.currentWeek);
       syncXPToSupabase(xpEarned);
+      cancelStreakWarning(); // workout done — dismiss streak warning
 
-      // Send feedback for custom workouts
       if (isCustom) {
         submitWorkoutFeedback({
           workoutId: params.customId,
-          difficultyRating: feedbackRating,
-          energyLevel: feedbackEnergy,
+          difficultyRating: postFeedbackRating || feedbackRating,
+          energyLevel: postFeedbackEnergy || feedbackEnergy,
         });
       }
 
-      // Check achievements
       const newAchievements = await checkAndUnlockAchievements(newState);
       if (newAchievements.length > 0) {
         setUnlockedAchievement(newAchievements[0]);
-        // Wait for toast to show before navigating back
         setTimeout(() => router.back(), 4000);
         return;
       }
@@ -630,60 +737,91 @@ export default function WorkoutScreen() {
 
   // ── Pantalla de completado ──
   if (finished) {
+    const mins = Math.floor(sessionDuration / 60);
+    const secs = sessionDuration % 60;
+    const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    const feedbackDone = postFeedbackRating > 0 && postFeedbackEnergy > 0;
+
     return (
       <SafeAreaView style={[st.safe, { backgroundColor: theme.bg }]}>
-        <View style={st.center}>
-          {!showFeedback ? (
-            <>
-              <Text style={st.finishEmoji}>🎉</Text>
-              <Text style={[st.finishTitle, { color: theme.white }]}>{t('workout.finished')}</Text>
-              <Text style={[st.finishSub, { color: theme.gray }]}>{workout.emoji} {workout.name}</Text>
-              <Text style={[st.finishDetail, { color: theme.gray }]}>{exercises.length} {t('workout.exercisesDone')}</Text>
-              {xpMultiplier > 1 && (
-                <View style={{ backgroundColor: theme.accent + '20', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 8, marginBottom: 16 }}>
-                  <Text style={{ fontSize: 18, fontWeight: '900', color: theme.accent }}>⚡ x{xpMultiplier} XP</Text>
-                </View>
-              )}
-              <TouchableOpacity style={[st.finishBtn, { backgroundColor: phaseColor }]} onPress={handleFinishWorkout}>
-                <Text style={[st.finishBtnText, { color: isDark ? '#000' : '#fff' }]}>{t('workout.saveAndBack')}</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <Text style={{ fontSize: 40, marginBottom: 12 }}>📝</Text>
-              <Text style={[st.finishTitle, { color: theme.white, fontSize: 22 }]}>Feedback</Text>
-              <Text style={[st.finishSub, { color: theme.gray, marginBottom: 20 }]}>{workout.name}</Text>
+        <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+          {/* Hero */}
+          <View style={{ alignItems: 'center', marginBottom: 28, marginTop: 12 }}>
+            <Text style={{ fontSize: 64, marginBottom: 8 }}>🎉</Text>
+            <Text style={[st.finishTitle, { color: theme.white }]}>¡Entreno completado!</Text>
+            <Text style={[st.finishSub, { color: theme.gray }]}>{activeWorkout.emoji} {activeWorkout.name}</Text>
+          </View>
 
-              <Text style={{ fontSize: 12, fontWeight: '800', color: theme.gray, letterSpacing: 1, marginBottom: 8 }}>DIFICULTAD</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
-                {[1,2,3,4,5].map(n => (
-                  <TouchableOpacity key={n} onPress={() => setFeedbackRating(n)}
-                    style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
-                      backgroundColor: feedbackRating >= n ? theme.accent + '30' : theme.bgCard,
-                      borderWidth: 1, borderColor: feedbackRating >= n ? theme.accent : theme.border }}>
-                    <Text style={{ fontSize: 18 }}>⭐</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+          {/* Stats grid */}
+          <View style={st.summaryGrid}>
+            <View style={[st.summaryCell, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+              <Text style={st.summaryCellIcon}>⏱</Text>
+              <Text style={[st.summaryCellVal, { color: theme.white }]}>{durationStr}</Text>
+              <Text style={[st.summaryCellLbl, { color: theme.gray }]}>Duración</Text>
+            </View>
+            <View style={[st.summaryCell, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+              <Text style={st.summaryCellIcon}>💪</Text>
+              <Text style={[st.summaryCellVal, { color: theme.white }]}>{exercises.length}</Text>
+              <Text style={[st.summaryCellLbl, { color: theme.gray }]}>Ejercicios</Text>
+            </View>
+            <View style={[st.summaryCell, { backgroundColor: phaseColor + '18', borderColor: phaseColor + '50' }]}>
+              <Text style={st.summaryCellIcon}>⚡</Text>
+              <Text style={[st.summaryCellVal, { color: phaseColor }]}>+{earnedXP || '—'}</Text>
+              <Text style={[st.summaryCellLbl, { color: theme.gray }]}>XP</Text>
+            </View>
+            <View style={[st.summaryCell, { backgroundColor: '#FF950018', borderColor: '#FF950050' }]}>
+              <Text style={st.summaryCellIcon}>🔥</Text>
+              <Text style={[st.summaryCellVal, { color: '#FF9500' }]}>{newStreak || '—'}</Text>
+              <Text style={[st.summaryCellLbl, { color: theme.gray }]}>Racha</Text>
+            </View>
+          </View>
 
-              <Text style={{ fontSize: 12, fontWeight: '800', color: theme.gray, letterSpacing: 1, marginBottom: 8 }}>ENERGIA</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 28 }}>
-                {[1,2,3,4,5].map(n => (
-                  <TouchableOpacity key={n} onPress={() => setFeedbackEnergy(n)}
-                    style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
-                      backgroundColor: feedbackEnergy >= n ? '#FF950030' : theme.bgCard,
-                      borderWidth: 1, borderColor: feedbackEnergy >= n ? '#FF9500' : theme.border }}>
-                    <Text style={{ fontSize: 18 }}>⚡</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+          {/* Feedback */}
+          <View style={[st.feedbackCard, { backgroundColor: theme.bgCard, borderColor: theme.border }]}>
+            <Text style={[st.feedbackTitle, { color: theme.white }]}>¿Cómo ha ido?</Text>
 
-              <TouchableOpacity style={[st.finishBtn, { backgroundColor: phaseColor }]} onPress={handleFinishWorkout}>
-                <Text style={[st.finishBtnText, { color: isDark ? '#000' : '#fff' }]}>{t('workout.saveAndBack')}</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+            <Text style={[st.feedbackLabel, { color: theme.gray }]}>DIFICULTAD</Text>
+            <View style={st.starsRow}>
+              {[1,2,3,4,5].map(n => (
+                <TouchableOpacity key={n} onPress={() => setPostFeedbackRating(n)}
+                  style={[st.starBtn, {
+                    backgroundColor: postFeedbackRating >= n ? phaseColor + '30' : theme.bgLight,
+                    borderColor: postFeedbackRating >= n ? phaseColor : 'transparent',
+                  }]}>
+                  <Text style={{ fontSize: 20 }}>{postFeedbackRating >= n ? '⭐' : '☆'}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[st.feedbackLabel, { color: theme.gray, marginTop: 14 }]}>ENERGÍA</Text>
+            <View style={st.starsRow}>
+              {[1,2,3,4,5].map(n => (
+                <TouchableOpacity key={n} onPress={() => setPostFeedbackEnergy(n)}
+                  style={[st.starBtn, {
+                    backgroundColor: postFeedbackEnergy >= n ? '#FF950030' : theme.bgLight,
+                    borderColor: postFeedbackEnergy >= n ? '#FF9500' : 'transparent',
+                  }]}>
+                  <Text style={{ fontSize: 20 }}>{postFeedbackEnergy >= n ? '⚡' : '·'}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* CTA */}
+          <TouchableOpacity
+            style={[st.finishBtn, { backgroundColor: feedbackDone ? phaseColor : theme.border, marginTop: 8 }]}
+            onPress={handleFinishWorkout}
+          >
+            <Text style={[st.finishBtnText, { color: feedbackDone ? (isDark ? '#000' : '#fff') : theme.gray }]}>
+              {feedbackDone ? 'Guardar y salir →' : 'Valorar para continuar'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={handleFinishWorkout} style={{ alignItems: 'center', paddingVertical: 12 }}>
+            <Text style={{ color: theme.gray, fontSize: 12 }}>Saltar valoración</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
         <XPToast xp={earnedXP} visible={showXPToast} theme={theme} onDone={() => setShowXPToast(false)} />
         <StreakToast streak={newStreak} visible={showStreakToast} theme={theme} onDone={() => setShowStreakToast(false)} />
         <AchievementToast
@@ -732,7 +870,7 @@ export default function WorkoutScreen() {
           <Text style={[st.headerBack, { color: theme.gray }]}>✕</Text>
         </TouchableOpacity>
         <View style={st.headerCenter}>
-          <Text style={st.headerTitle}>{workout.emoji} {workout.name}</Text>
+          <Text style={st.headerTitle}>{activeWorkout.emoji} {activeWorkout.name}</Text>
           <Text style={st.headerSub}>{completedExs.length} / {exercises.length} ejercicios</Text>
         </View>
         <View style={{ width: 32 }} />
@@ -752,6 +890,18 @@ export default function WorkoutScreen() {
       <ScrollView contentContainerStyle={st.content} showsVerticalScrollIndicator={false}>
         {/* Ejercicio actual */}
         <View style={st.exerciseCard}>
+          {/* Badge de fase */}
+          {(() => {
+            const ph = exercise.phase || 'Principal';
+            const meta = PHASE_META[ph] || PHASE_META['Principal'];
+            const color = meta.color || phaseColor;
+            return (
+              <View style={[st.phaseBadge, { backgroundColor: color + '20', borderColor: color + '50' }]}>
+                <Text style={[st.phaseBadgeText, { color }]}>{meta.icon} {ph.toUpperCase()}</Text>
+              </View>
+            );
+          })()}
+
           <Text style={[st.exerciseNum, { color: theme.gray }]}>{t('workout.exerciseOf')} {currentEx + 1} {t('workout.of')} {exercises.length}</Text>
 
           {/* Ilustracion */}
@@ -770,29 +920,102 @@ export default function WorkoutScreen() {
 
           <Text style={st.exerciseName}>{exercise.name}</Text>
 
-          {/* Timer / Reps */}
-          {hasDuration ? (
+          {/* Recomendación de peso (si aplica) */}
+          {(() => {
+            const hint = getWeightHint(exercise.name, exercise.reps, strengthData);
+            return hint ? (
+              <View style={[st.weightHint, { backgroundColor: theme.bgLight, borderColor: theme.border }]}>
+                <Text style={[st.weightHintText, { color: theme.accent }]}>🏋️ Peso sugerido: {hint}</Text>
+              </View>
+            ) : null;
+          })()}
+
+          {/* ── Selector de modo ── */}
+          <View style={st.modeSelector}>
+            {[
+              { key: 'reps',   icon: '🔢', label: 'Reps' },
+              { key: 'manual', icon: '⏱',  label: 'Manual' },
+              { key: 'timer',  icon: '⏰',  label: 'Timer' },
+            ].map(({ key, icon, label }) => {
+              const active = execMode === key;
+              return (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => setExecMode(key)}
+                  style={[st.modeTab, { borderColor: active ? phaseColor : theme.border, backgroundColor: active ? phaseColor + '20' : theme.bgLight }]}
+                >
+                  <Text style={st.modeTabIcon}>{icon}</Text>
+                  <Text style={[st.modeTabLabel, { color: active ? phaseColor : theme.gray }]}>{label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* ── MODO A: Contador de Reps ── */}
+          {execMode === 'reps' && (
+            <View style={st.repsModeWrap}>
+              <TouchableOpacity
+                style={[st.repTapBtn, { borderColor: repTarget && repCount >= repTarget ? '#00CC66' : phaseColor }]}
+                onPress={handleRepTap}
+                activeOpacity={0.6}
+              >
+                <Text style={[st.repTapCount, { color: repTarget && repCount >= repTarget ? '#00CC66' : phaseColor }]}>
+                  {repCount}
+                </Text>
+                {repTarget ? (
+                  <Text style={[st.repTapTarget, { color: theme.gray }]}>/ {repTarget}</Text>
+                ) : null}
+                <Text style={[st.repTapHint, { color: theme.gray }]}>TAP</Text>
+              </TouchableOpacity>
+              <Text style={[st.repsLabel, { color: theme.gray }]}>{exercise.reps}</Text>
+              {repCount > 0 && (
+                <TouchableOpacity onPress={() => setRepCount(0)} style={{ paddingVertical: 6, paddingHorizontal: 16 }}>
+                  <Text style={{ color: theme.gray, fontSize: 12, fontWeight: '700' }}>↺ Reset</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* ── MODO B: Manual + Cronómetro ── */}
+          {execMode === 'manual' && (
+            <View style={st.manualModeWrap}>
+              <Text style={[st.manualTime, { color: theme.white }]}>{formatTime(manualElapsed)}</Text>
+              <Text style={[st.repsLabel, { color: theme.gray, marginBottom: 14 }]}>{exercise.reps}</Text>
+              <TouchableOpacity
+                style={[st.timerBtn, {
+                  backgroundColor: manualRunning ? '#FF444430' : phaseColor + '25',
+                  borderColor: manualRunning ? '#FF4444' : phaseColor,
+                }]}
+                onPress={() => setManualRunning(r => !r)}
+              >
+                <Text style={[st.timerBtnText, { color: manualRunning ? '#FF4444' : phaseColor }]}>
+                  {manualRunning ? '⏸  Pausar' : manualElapsed > 0 ? '▶  Continuar' : '▶  Iniciar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── MODO C: Temporizador Countdown ── */}
+          {execMode === 'timer' && (
             <View style={st.timerSection}>
               <Text style={[st.timerDisplay, { color: exerciseTime === 0 ? '#00CC66' : '#fff' }]}>
                 {formatTime(exerciseTime)}
               </Text>
               {exerciseTime > 0 ? (
                 <TouchableOpacity
-                  style={[st.timerBtn, { backgroundColor: timerRunning ? '#FF444430' : phaseColor + '25', borderColor: timerRunning ? '#FF4444' : phaseColor }]}
+                  style={[st.timerBtn, {
+                    backgroundColor: timerRunning ? '#FF444430' : phaseColor + '25',
+                    borderColor: timerRunning ? '#FF4444' : phaseColor,
+                  }]}
                   onPress={timerRunning ? handlePauseTimer : handleStartTimer}
                 >
                   <Text style={[st.timerBtnText, { color: timerRunning ? '#FF4444' : phaseColor }]}>
-                    {timerRunning ? t('workout.pause') : timerStarted ? t('workout.resume') : t('workout.start')}
+                    {timerRunning ? '⏸  Pausar' : timerStarted ? '▶  Continuar' : '▶  Iniciar'}
                   </Text>
                 </TouchableOpacity>
               ) : (
-                <Text style={[st.timerDone, { color: theme.success }]}>{t('workout.timeComplete')}</Text>
+                <Text style={[st.timerDone, { color: theme.success }]}>¡Tiempo completado! ✓</Text>
               )}
-            </View>
-          ) : (
-            <View style={st.repsSection}>
-              <Text style={[st.repsValue, { color: phaseColor }]}>{exercise.reps}</Text>
-              <Text style={[st.repsLabel, { color: theme.gray }]}>{t('workout.reps')}</Text>
             </View>
           )}
 
@@ -818,7 +1041,10 @@ export default function WorkoutScreen() {
               </View>
               <View style={st.listInfo}>
                 <Text style={[st.listName, done && st.listNameDone]}>{ex.name}</Text>
-                <Text style={st.listMeta}>{ex.reps}{ex.rest > 0 ? ` · ${ex.rest}s descanso` : ''}</Text>
+                <Text style={st.listMeta}>
+                  {ex.phase && ex.phase !== 'Principal' ? `${PHASE_META[ex.phase]?.icon || ''} ${ex.phase} · ` : ''}
+                  {ex.reps}{ex.rest > 0 ? ` · ${ex.rest}s descanso` : ''}
+                </Text>
               </View>
               {isCurrent && !done && <View style={[st.currentDot, { backgroundColor: phaseColor }]} />}
             </TouchableOpacity>
@@ -868,6 +1094,31 @@ const st = StyleSheet.create({
 
   exerciseName: { fontSize: 26, fontWeight: '900', color: '#fff', textAlign: 'center', marginBottom: 16 },
 
+  // Phase badge
+  phaseBadge: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 4, marginBottom: 10, alignSelf: 'center' },
+  phaseBadgeText: { fontSize: 11, fontWeight: '800', letterSpacing: 1.5 },
+
+  // Weight hint
+  weightHint: { borderRadius: 10, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 8, marginBottom: 12 },
+  weightHintText: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
+
+  // Mode selector
+  modeSelector: { flexDirection: 'row', gap: 8, marginBottom: 20, marginTop: 4 },
+  modeTab: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 12, borderWidth: 1.5, gap: 2 },
+  modeTabIcon: { fontSize: 18 },
+  modeTabLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+
+  // Mode A: Reps counter
+  repsModeWrap: { alignItems: 'center', gap: 8, marginBottom: 4 },
+  repTapBtn: { width: 140, height: 140, borderRadius: 70, borderWidth: 3, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  repTapCount: { fontSize: 52, fontWeight: '900', lineHeight: 58 },
+  repTapTarget: { fontSize: 16, fontWeight: '700' },
+  repTapHint: { fontSize: 11, fontWeight: '800', letterSpacing: 2, marginTop: 2 },
+
+  // Mode B: Manual stopwatch
+  manualModeWrap: { alignItems: 'center', gap: 8 },
+  manualTime: { fontSize: 56, fontWeight: '900', letterSpacing: 2 },
+
   // Timer
   timerSection: { alignItems: 'center', gap: 12 },
   timerDisplay: { fontSize: 56, fontWeight: '900', letterSpacing: 2 },
@@ -911,10 +1162,22 @@ const st = StyleSheet.create({
   skipBtnText: { fontSize: 15, fontWeight: '700' },
 
   // Finish screen
-  finishEmoji: { fontSize: 64, marginBottom: 16 },
-  finishTitle: { fontSize: 28, fontWeight: '900', color: '#fff', marginBottom: 8 },
-  finishSub: { fontSize: 16, color: '#888', marginBottom: 4 },
-  finishDetail: { fontSize: 14, color: '#888', marginBottom: 32 },
-  finishBtn: { borderRadius: 16, paddingHorizontal: 40, paddingVertical: 18 },
-  finishBtnText: { fontSize: 16, fontWeight: '800', color: '#000' },
+  finishTitle: { fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 6 },
+  finishSub: { fontSize: 15, textAlign: 'center' },
+  finishBtn: { borderRadius: 16, paddingVertical: 18, alignItems: 'center', marginTop: 4 },
+  finishBtnText: { fontSize: 16, fontWeight: '800' },
+
+  // Summary grid
+  summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
+  summaryCell: { flex: 1, minWidth: '44%', borderRadius: 16, padding: 16, alignItems: 'center', borderWidth: 1, gap: 4 },
+  summaryCellIcon: { fontSize: 24 },
+  summaryCellVal: { fontSize: 22, fontWeight: '900' },
+  summaryCellLbl: { fontSize: 11, fontWeight: '700' },
+
+  // Feedback card
+  feedbackCard: { borderRadius: 16, padding: 20, borderWidth: 1, marginBottom: 16 },
+  feedbackTitle: { fontSize: 17, fontWeight: '900', marginBottom: 16, textAlign: 'center' },
+  feedbackLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5, marginBottom: 8 },
+  starsRow: { flexDirection: 'row', gap: 8 },
+  starBtn: { flex: 1, height: 44, borderRadius: 10, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
 });

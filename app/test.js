@@ -8,6 +8,7 @@ import { loadState, saveState } from '../constants/storage';
 export default function TestScreen() {
   const router = useRouter();
   const [step, setStep] = useState(0);
+  const canGoBack = router.canGoBack?.() ?? true;
   const [results, setResults] = useState({});
   const [current, setCurrent] = useState('');
   const [done, setDone] = useState(false);
@@ -68,6 +69,11 @@ export default function TestScreen() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <SafeAreaView style={s.safe}>
+        {canGoBack && (
+          <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+            <Text style={s.backBtnText}>← Volver</Text>
+          </TouchableOpacity>
+        )}
         <ScrollView contentContainerStyle={s.scroll}>
           <View style={s.progressRow}>
             {TEST_EXERCISES.map((_, i) => (
@@ -107,6 +113,8 @@ export default function TestScreen() {
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#0F0F0F' },
+  backBtn: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4 },
+  backBtnText: { color: '#C8FF00', fontSize: 14, fontWeight: '700' },
   scroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 40 },
   center: { flex: 1, justifyContent: 'center', paddingHorizontal: 28, alignItems: 'center' },
   progressRow: { flexDirection: 'row', gap: 8, marginBottom: 32, justifyContent: 'center' },

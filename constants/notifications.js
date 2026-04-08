@@ -116,13 +116,13 @@ export async function createNotification({ userId, type, title, body, data }) {
  */
 export async function createNotificationForAll({ type, title, body, data }) {
   try {
-    // Fetch all user profiles to get user IDs
+    // Fetch all user IDs from the users table
     const { data: profiles, error: profilesError } = await supabase
-      .from('profiles')
+      .from('users')
       .select('id');
 
     if (profilesError) {
-      console.warn('createNotificationForAll profiles error:', profilesError.message);
+      console.warn('createNotificationForAll users error:', profilesError.message);
       return;
     }
 

@@ -13,10 +13,13 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
 
+  const [environment, setEnvironment] = useState(null); // 'home' | 'gym'
+
   async function startFromZero() {
     const state = await loadState();
     state.onboarded = true;
     state.currentWeek = 1;
+    state.trainingEnvironment = environment || 'home';
     await saveState(state);
     if (name) await saveProfile({ name, photoUri: null, height: '', startWeight: '', goal: '' });
     router.replace('/(tabs)');
@@ -25,6 +28,7 @@ export default function Onboarding() {
   async function goToTest() {
     const state = await loadState();
     state.onboarded = true;
+    state.trainingEnvironment = environment || 'home';
     await saveState(state);
     if (name) await saveProfile({ name, photoUri: null, height: '', startWeight: '', goal: '' });
     router.replace('/test');
@@ -71,6 +75,51 @@ export default function Onboarding() {
     );
   }
 
+  // Step 2 — Gym or Home
+  if (step === 2) {
+    return (
+      <SafeAreaView style={[s.safe, { backgroundColor: theme.bg }]}>
+        <View style={s.center}>
+          <Text style={[s.question, { color: theme.white }]}>¿Dónde vas a entrenar?</Text>
+          <Text style={[s.hint, { color: theme.gray }]}>Adaptaremos los ejercicios a tu entorno</Text>
+
+          <TouchableOpacity
+            style={[s.optionCard, { backgroundColor: theme.bgCard, borderColor: environment === 'home' ? theme.accent : theme.border }]}
+            onPress={() => setEnvironment('home')}
+          >
+            <Text style={s.optionEmoji}>🏠</Text>
+            <View style={s.optionInfo}>
+              <Text style={[s.optionTitle, { color: environment === 'home' ? theme.accent : theme.white }]}>En casa</Text>
+              <Text style={[s.optionDesc, { color: theme.gray }]}>Peso corporal, mancuernas y bandas elásticas</Text>
+            </View>
+            {environment === 'home' && <Text style={{ color: theme.accent, fontSize: 20 }}>✓</Text>}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[s.optionCard, { backgroundColor: theme.bgCard, borderColor: environment === 'gym' ? theme.accent : theme.border }]}
+            onPress={() => setEnvironment('gym')}
+          >
+            <Text style={s.optionEmoji}>🏋️</Text>
+            <View style={s.optionInfo}>
+              <Text style={[s.optionTitle, { color: environment === 'gym' ? theme.accent : theme.white }]}>Gimnasio</Text>
+              <Text style={[s.optionDesc, { color: theme.gray }]}>Máquinas, mancuernas, barras y cardio</Text>
+            </View>
+            {environment === 'gym' && <Text style={{ color: theme.accent, fontSize: 20 }}>✓</Text>}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[s.btnAccent, { backgroundColor: environment ? theme.accent : theme.border, marginTop: 24 }]}
+            onPress={() => environment && setStep(3)}
+            disabled={!environment}
+          >
+            <Text style={[s.btnAccentText, { color: isDark ? '#000' : '#fff' }]}>Continuar →</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Step 3 — Experience level
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: theme.bg }]}>
       <View style={s.center}>

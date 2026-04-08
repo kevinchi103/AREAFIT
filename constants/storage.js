@@ -1,21 +1,24 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const KEYS = {
-  STATE:   'areafit_state',
-  PROFILE: 'areafit_profile',
-  WEIGHTS: 'areafit_weights',
+  STATE:      'areafit_state',
+  PROFILE:    'areafit_profile',
+  WEIGHTS:    'areafit_weights',
+  HISTORY:    'areafit_history',
+  CHALLENGES: 'areafit_challenges',
 };
 
 export const DEFAULT_STATE = {
-  onboarded:       false,
-  currentWeek:     1,
-  completedDays:   [],
-  xp:              0,
-  weeklyXP:        0,
-  level:           1,
-  streak:          0,
-  lastTrainDate:   null,
-  testPassed:      false,
+  onboarded:           false,
+  currentWeek:         1,
+  completedDays:       [],
+  xp:                  0,
+  weeklyXP:            0,
+  level:               1,
+  streak:              0,
+  lastTrainDate:       null,
+  testPassed:          false,
+  trainingEnvironment: 'home', // 'home' | 'gym'
 };
 
 export const DEFAULT_PROFILE = {
@@ -24,6 +27,8 @@ export const DEFAULT_PROFILE = {
   height:     '',
   startWeight:'',
   goal:       '',
+  benchPress: '', // kg en press banca (1RM aproximado)
+  squat:      '', // kg en sentadilla (1RM aproximado)
 };
 
 export async function loadState() {
@@ -46,4 +51,26 @@ export async function loadWeights() {
 }
 export async function saveWeights(w) {
   try { await AsyncStorage.setItem(KEYS.WEIGHTS, JSON.stringify(w)); } catch {}
+}
+
+// ── Historial de entrenamientos ────────────────────────────────
+export async function loadHistory() {
+  try { const r = await AsyncStorage.getItem(KEYS.HISTORY); return r ? JSON.parse(r) : []; }
+  catch { return []; }
+}
+export async function saveSession(session) {
+  try {
+    const history = await loadHistory();
+    const updated = [session, ...history].slice(0, 200); // máx 200 sesiones
+    await AsyncStorage.setItem(KEYS.HISTORY, JSON.stringify(updated));
+  } catch {}
+}
+
+// ── Progreso de retos ──────────────────────────────────────────
+export async function loadChallengeProgress() {
+  try { const r = await AsyncStorage.getItem(KEYS.CHALLENGES); return r ? JSON.parse(r) : {}; }
+  catch { return {}; }
+}
+export async function saveChallengeProgress(data) {
+  try { await AsyncStorage.setItem(KEYS.CHALLENGES, JSON.stringify(data)); } catch {}
 }
