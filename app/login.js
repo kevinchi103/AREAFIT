@@ -31,9 +31,9 @@ export default function LoginScreen() {
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   function animateTransition(nextMode) {
-    Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => {
+    Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: Platform.OS !== 'web' }).start(() => {
       setMode(nextMode);
-      Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+      Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
     });
   }
 
@@ -102,7 +102,7 @@ export default function LoginScreen() {
   if (mode === 'welcome') {
     return (
       <SafeAreaView style={s.safe}>
-        <Animated.View style={[s.center, { opacity: fadeAnim }]}>
+        <View style={s.center}>
           <View style={s.welcomeTop}>
             <Text style={s.logo}>{t('auth.appName')}</Text>
             <Text style={s.tagline}>{t('auth.tagline')}</Text>
@@ -123,7 +123,7 @@ export default function LoginScreen() {
               <Text style={s.btnOutlineText}>{t('auth.haveAccount')}</Text>
             </TouchableOpacity>
           </View>
-        </Animated.View>
+        </View>
       </SafeAreaView>
     );
   }
@@ -133,7 +133,7 @@ export default function LoginScreen() {
     return (
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <SafeAreaView style={s.safe}>
-          <Animated.View style={[s.center, { opacity: fadeAnim }]}>
+          <View style={s.center}>
             <TouchableOpacity style={s.backRow} onPress={() => animateTransition('welcome')}>
               <Text style={s.backArrow}>←</Text>
             </TouchableOpacity>
@@ -183,7 +183,7 @@ export default function LoginScreen() {
             <TouchableOpacity style={s.switchBtn} onPress={() => animateTransition('register')}>
               <Text style={s.switchText}>{t('auth.noAccount')} <Text style={s.switchLink}>{t('auth.register')}</Text></Text>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         </SafeAreaView>
       </KeyboardAvoidingView>
     );
@@ -194,7 +194,7 @@ export default function LoginScreen() {
     return (
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <SafeAreaView style={s.safe}>
-          <Animated.View style={[s.center, { opacity: fadeAnim }]}>
+          <View style={s.center}>
             <TouchableOpacity style={s.backRow} onPress={() => animateTransition('welcome')}>
               <Text style={s.backArrow}>←</Text>
             </TouchableOpacity>
@@ -269,7 +269,7 @@ export default function LoginScreen() {
             <TouchableOpacity style={s.switchBtn} onPress={() => animateTransition('login')}>
               <Text style={s.switchText}>{t('auth.hasAccount')} <Text style={s.switchLink}>{t('auth.login')}</Text></Text>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         </SafeAreaView>
       </KeyboardAvoidingView>
     );
@@ -279,7 +279,7 @@ export default function LoginScreen() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <SafeAreaView style={s.safe}>
-        <Animated.View style={[s.center, { opacity: fadeAnim }]}>
+        <View style={s.center}>
           <TouchableOpacity style={s.backRow} onPress={() => animateTransition('register')}>
             <Text style={s.backArrow}>←</Text>
           </TouchableOpacity>
@@ -359,7 +359,7 @@ export default function LoginScreen() {
           >
             <Text style={s.btnAccentText}>{loading ? t('auth.creating') : t('auth.createAccount')}</Text>
           </TouchableOpacity>
-        </Animated.View>
+        </View>
       </SafeAreaView>
     </KeyboardAvoidingView>
   );

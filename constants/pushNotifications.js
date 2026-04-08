@@ -26,6 +26,9 @@ Notifications.setNotificationHandler({
  * Returns true if granted, false otherwise.
  */
 export async function requestNotificationPermission() {
+  // Web doesn't support expo-notifications permissions the same way
+  if (Platform.OS === 'web') return false;
+
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
       name: 'HAB',
